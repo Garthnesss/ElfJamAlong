@@ -59,4 +59,5 @@ The shipped model is trained on all six players, so it has no held-out score of 
 ## History
 - **2026-11-09** — Research; first prototype (chord templates, rule-based lead, Link, virtual MIDI port). Demo heard in Live. Driverless Live tap. Own-note cancellation. Virtual guitar track.
 - **2026-11-09** — Bass and arpeggio roles, capture to file and Live clip, saved settings, launcher. Cancellation reworked after it hurt detection with the bass on.
+- **2026-11-11** — Research pass on May–November 2026 (docs/RESEARCH_2026-11.md): Link Audio in Live 12.4 may replace the tap; roadmap updated; session prompt written (docs/SESSION_PROMPT.md).
 - **2026-11-10** — GuitarSet benchmark showed 41% on real guitar. Trained chord classifier: 38% → 67% on held-out players. Renamed JamAlong → ElfJamAlong. These four documents written.
