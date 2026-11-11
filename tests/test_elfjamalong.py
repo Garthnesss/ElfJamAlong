@@ -1,10 +1,10 @@
 import numpy as np
 import pytest
 
-from jamalong.chords import ChordDetector
-from jamalong.engine import Engine
-from jamalong.melody import RuleBasedMelody
-from jamalong.theory import Chord, Key, scale_for
+from elfjamalong.chords import ChordDetector
+from elfjamalong.engine import Engine
+from elfjamalong.melody import RuleBasedMelody
+from elfjamalong.theory import Chord, Key, scale_for
 
 from synth import VOICINGS, strum
 
@@ -211,8 +211,8 @@ def test_recorded_virtual_guitar_loop_has_no_wrong_chords():
 
 
 def _play_voices(chords, key, bars, roles):
-    from jamalong.engine import Voice
-    from jamalong.roles import Arpeggio, BassLine
+    from elfjamalong.engine import Voice
+    from elfjamalong.roles import Arpeggio, BassLine
 
     makers = {"lead": lambda: RuleBasedMelody(seed=1), "bass": lambda: BassLine(seed=1), "arp": lambda: Arpeggio(seed=1)}
     sinks = {r: Sink() for r in roles}
@@ -249,7 +249,7 @@ def test_bass_and_arp_follow_the_chord():
 def test_capture_last_bars_to_midi_file(tmp_path):
     import mido
 
-    from jamalong.capture import capture
+    from elfjamalong.capture import capture
 
     chords = [Chord.parse(c) for c in "Am F C G".split()]
     eng, sinks = _play_voices(chords, Key.parse("C major"), 12.5, ["lead", "bass"])
@@ -265,7 +265,7 @@ def test_capture_last_bars_to_midi_file(tmp_path):
     files = list(tmp_path.glob("*.mid"))
     assert len(files) == 1 and "saved" in lines[0]
     mid = mido.MidiFile(files[0])
-    assert [t.name for t in mid.tracks[1:]] == ["JamAlong bass", "JamAlong lead"]
+    assert [t.name for t in mid.tracks[1:]] == ["ElfJamAlong bass", "ElfJamAlong lead"]
     ons = sum(1 for t in mid.tracks for m in t if m.type == "note_on")
     assert ons == len(notes)
     assert capture([], 0, 120.0, "", tmp_path, live_track=None) == ["nothing to capture yet"]

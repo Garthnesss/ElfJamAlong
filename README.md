@@ -1,4 +1,4 @@
-# JamAlong
+# ElfJamAlong
 
 Plays a MIDI melody along with your guitar: it listens to the guitar input,
 works out the chord and key, and sends an in-key melody to your DAW in time with
@@ -7,49 +7,51 @@ the session.
 This is the plumbing prototype. The melody comes from rules (chord tones on
 strong beats, scale steps between, four-bar phrases), not a trained model. The
 generator sits behind a one-method interface (`MelodyGenerator.step` in
-`src/jamalong/melody.py`) so a model can replace it later.
+`src/elfjamalong/melody.py`) so a model can replace it later.
 
 ```
 guitar audio ──> chord + key detection ──┐
-                                         ├──> melody generator ──> virtual MIDI port "JamAlong" ──> DAW instrument track
+                                         ├──> melody generator ──> virtual MIDI port "ElfJamAlong" ──> DAW instrument track
 DAW tempo / bar position (Ableton Link) ─┘
 ```
+
+Project documents: [PROJECT_TRUTH.md](PROJECT_TRUTH.md) (what it is and is not), [ARCHITECTURE.md](ARCHITECTURE.md), [STATUS.md](STATUS.md) (what is verified), [ROADMAP.md](ROADMAP.md).
 
 ## Try it without a guitar
 
 ```bash
-uv run jamalong demo --chords "Am F C G"
+uv run elfjamalong demo --chords "Am F C G"
 ```
 
 This loops the typed progression and sends the melody over MIDI, which is the
 quickest way to check the Ableton routing below.
 
 ```bash
-uv run jamalong render --chords "Am F C G" --bars 16 -o jam.mid
+uv run elfjamalong render --chords "Am F C G" --bars 16 -o jam.mid
 ```
 
 writes the melody and the chords to a MIDI file you can drag into a DAW.
 
 ## Ableton Live setup
 
-1. Start JamAlong first (`demo` or `run`), so the `JamAlong` MIDI port exists.
+1. Start ElfJamAlong first (`demo` or `run`), so the `ElfJamAlong` MIDI port exists.
 2. Live > Settings > Link, Tempo & MIDI:
-   - turn **Link** on (JamAlong then follows Live's tempo and bar position);
-   - under MIDI input ports, tick **Track** for `JamAlong`.
-3. Create a MIDI track with any instrument. Set **MIDI From** to `JamAlong`,
+   - turn **Link** on (ElfJamAlong then follows Live's tempo and bar position);
+   - under MIDI input ports, tick **Track** for `ElfJamAlong`.
+3. Create a MIDI track with any instrument. Set **MIDI From** to `ElfJamAlong`,
    and **Monitor** to **In**.
 4. Put the guitar on an audio track as usual, start your drums, and play.
 
 ## Play along
 
 ```bash
-uv run jamalong devices
+uv run elfjamalong devices
 ```
 
 lists audio inputs. Then, with your interface's index or name:
 
 ```bash
-uv run jamalong run --device 2 --input-channel 1
+uv run elfjamalong run --device 2 --input-channel 1
 ```
 
 macOS will ask to let the terminal use the microphone the first time. The
@@ -71,8 +73,8 @@ Useful options:
 
 ## Everyday use
 
-Double-click `JamAlong.command` (or run `uv run jamalong run`). Settings come from
-`jamalong.toml`; any long option can be saved there without its dashes.
+Double-click `ElfJamAlong.command` (or run `uv run elfjamalong run`). Settings come from
+`elfjamalong.toml`; any long option can be saved there without its dashes.
 
 **Roles.** `--roles lead,bass,arp` adds a bass line and an arpeggio that follow
 the same chords. By default every role plays on one MIDI channel, so a single
@@ -80,11 +82,11 @@ piano-like instrument plays all of them. `--split-channels` sends lead, bass and
 arp on channels 1, 2 and 3, for one instrument track each (set each track's MIDI
 From channel in Live).
 
-**Capture.** Press Enter in the JamAlong window, or run `uv run jamalong capture`
+**Capture.** Press Enter in the ElfJamAlong window, or run `uv run elfjamalong capture`
 from another terminal, to keep the last 8 complete bars (`--capture-bars`). They
 are written to `captures/` as a MIDI file with one track per role. If the
 AbletonMCP remote script is running in Live, the same notes also go into the
-first empty clip slot of the track named `JamAlong` (`--live-track`).
+first empty clip slot of the track named `ElfJamAlong` (`--live-track`).
 
 ## No interface: listen to the DAW directly
 
@@ -95,15 +97,15 @@ tools/livetap/build.sh
 builds a small helper once (needs Xcode's command line tools, macOS 14.4+). Then
 
 ```bash
-uv run jamalong run --source live
+uv run elfjamalong run --source live
 ```
 
 captures Ableton Live's own audio output with no loopback driver and no
 microphone. macOS may ask once for permission to record system audio. Use
 `--app <bundle id>` for another DAW, e.g. `--app com.apple.logic10`.
 
-The tap hears everything Live plays, including what JamAlong itself triggers.
-JamAlong knows which notes are its own: the lead's harmonics are treated as
+The tap hears everything Live plays, including what ElfJamAlong itself triggers.
+ElfJamAlong knows which notes are its own: the lead's harmonics are treated as
 unknown when judging the chord, and all of its notes are discounted when deciding
 whether you are still playing. Drums and other tracks are still in the signal; a
 guitar on its own input is cleaner.
@@ -113,7 +115,7 @@ guitar instrument (Live's "Guitar Acoustic" works) and loop it.
 
 ## Logic Pro
 
-The MIDI side works the same: `JamAlong` appears as a MIDI input, so a software
+The MIDI side works the same: `ElfJamAlong` appears as a MIDI input, so a software
 instrument track that is record-enabled will receive the notes. Tempo sync
 depends on Logic joining the Ableton Link session; this has not been tried.
 Without it, use `--no-link --bpm <project tempo>`, which matches the tempo but
@@ -126,7 +128,7 @@ triad; a bare power chord has no third, so major/minor is a guess there. The key
 is estimated from the chords heard so far and appears after two different
 chords; until then the melody stays on the current chord's pentatonic.
 
-The chord is chosen by a small trained network (`src/jamalong/chord_model.npz`,
+The chord is chosen by a small trained network (`src/elfjamalong/chord_model.npz`,
 about 11 KB, plain numpy at run time). It reads pitch-class energy in three
 registers and shares its weights across all 12 roots. `classifier="templates"`
 on `ChordDetector` switches back to the untrained template matcher.

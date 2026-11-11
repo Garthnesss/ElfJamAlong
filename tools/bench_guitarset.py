@@ -24,8 +24,8 @@ from pathlib import Path
 
 import numpy as np
 
-from jamalong.chords import ChordDetector
-from jamalong.theory import Chord, parse_note
+from elfjamalong.chords import ChordDetector
+from elfjamalong.theory import Chord, parse_note
 
 MAJ = {"maj", "7", "maj7", "maj6", "6", "9", "maj9", ""}
 MIN = {"min", "min7", "min6", "min9", "minmaj7"}
@@ -87,7 +87,7 @@ def main() -> int:
         keep = {int(p) for p in args.players.split(",")}
         jams = [n for n in jams if int(Path(n).name[:2]) in keep]
     if args.model:
-        import jamalong.chords as chords_module
+        import elfjamalong.chords as chords_module
 
         chords_module.MODEL_PATH = args.model
         chords_module.ChordModel.__init__.__defaults__ = (args.model,)

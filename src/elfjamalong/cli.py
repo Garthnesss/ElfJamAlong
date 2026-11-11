@@ -1,4 +1,4 @@
-"""Command line: `jamalong devices | run | demo | render | capture`."""
+"""Command line: `elfjamalong devices | run | demo | render | capture`."""
 
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ from .roles import Arpeggio, BassLine
 from .theory import Chord, Key
 
 
-PID_FILE = Path(tempfile.gettempdir()) / "jamalong.pid"
+PID_FILE = Path(tempfile.gettempdir()) / "elfjamalong.pid"
 ROLES = ("lead", "bass", "arp")
 
 
@@ -51,7 +51,7 @@ def _voices(args, midi, wrap=lambda sink, role: sink) -> list[Voice]:
 
 
 class _Capturer:
-    """Capture on SIGUSR1 (`jamalong capture`) or when Enter is pressed in the terminal."""
+    """Capture on SIGUSR1 (`elfjamalong capture`) or when Enter is pressed in the terminal."""
 
     def __init__(self, engine: Engine, clock, args, label=lambda: ""):
         self.engine, self.clock, self.args, self.label = engine, clock, args, label
@@ -212,7 +212,7 @@ def cmd_run(args) -> int:
     stop = _install_stop()
     capturer = _Capturer(engine, clock, args, lambda: str(detector.key or ""))
     print(f"Listening: {source.label} @ {source.sample_rate:.0f} Hz")
-    print(f"MIDI out:  virtual port 'JamAlong', channel {args.channel}, roles: {args.roles}")
+    print(f"MIDI out:  virtual port 'ElfJamAlong', channel {args.channel}, roles: {args.roles}")
     print(f"Press Enter to keep the last {args.capture_bars} bars.  Ctrl-C to quit.", flush=True)
 
     def status():
@@ -251,7 +251,7 @@ def cmd_demo(args) -> int:
     engine = Engine(_voices(args, midi), harmony)
     stop = _install_stop()
     capturer = _Capturer(engine, clock, args, lambda: str(key or ""))
-    print(f"Demo: {' | '.join(map(str, chords))}  (key {key}), roles: {args.roles}.  MIDI on port 'JamAlong'.")
+    print(f"Demo: {' | '.join(map(str, chords))}  (key {key}), roles: {args.roles}.  MIDI on port 'ElfJamAlong'.")
     print(f"Press Enter to keep the last {args.capture_bars} bars.  Ctrl-C to quit.", flush=True)
 
     def watch():
@@ -268,11 +268,11 @@ def cmd_demo(args) -> int:
 
 
 def cmd_capture(_args) -> int:
-    """Ask the running JamAlong to keep what it just played."""
+    """Ask the running ElfJamAlong to keep what it just played."""
     try:
         os.kill(int(PID_FILE.read_text()), signal.SIGUSR1)
     except (FileNotFoundError, ValueError, ProcessLookupError):
-        print("JamAlong is not running", file=sys.stderr)
+        print("ElfJamAlong is not running", file=sys.stderr)
         return 1
     print("capture requested")
     return 0
@@ -326,7 +326,7 @@ def cmd_render(args) -> int:
 
     mid = mido.MidiFile(ticks_per_beat=tpb)
     tempo_track = mido.MidiTrack([mido.MetaMessage("set_tempo", tempo=mido.bpm2tempo(args.bpm), time=0)])
-    mid.tracks.extend([tempo_track, to_track(events, "JamAlong melody"), to_track(chord_events, "Chords")])
+    mid.tracks.extend([tempo_track, to_track(events, "ElfJamAlong melody"), to_track(chord_events, "Chords")])
     mid.save(args.output)
     notes = sum(1 for _, m in events if m.type == "note_on")
     print(f"Wrote {args.output}: {args.bars} bars, {notes} melody notes, key {key}")
@@ -337,7 +337,7 @@ def cmd_render(args) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    p = argparse.ArgumentParser(prog="jamalong", description="Plays a melody along with your guitar chords.")
+    p = argparse.ArgumentParser(prog="elfjamalong", description="Plays a melody along with your guitar chords.")
     sub = p.add_subparsers(dest="command", required=True)
 
     def melody_opts(sp):
@@ -354,7 +354,7 @@ def main(argv: list[str] | None = None) -> int:
                         help="send lead/bass/arp on channels N, N+1, N+2 instead of all on one")
         sp.add_argument("--capture-bars", type=int, default=8, help="bars kept by a capture (default 8)")
         sp.add_argument("--capture-dir", default="captures", help="folder for captured MIDI files")
-        sp.add_argument("--live-track", default="JamAlong", help="Live track that receives captured clips")
+        sp.add_argument("--live-track", default="ElfJamAlong", help="Live track that receives captured clips")
         sp.add_argument("--no-live-clip", action="store_true", help="capture to a file only")
         sp.add_argument("--no-link", action="store_true", help="use an internal clock instead of Ableton Link")
         sp.add_argument("--channel", type=int, default=1, help="MIDI channel 1-16 (default 1)")
@@ -366,7 +366,7 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument("--source", choices=["device", "live"], default="device",
                      help="'device' = an audio input; 'live' = tap a running app's output directly, no driver")
     run.add_argument("--app", default="com.ableton.live", help="bundle id to tap with --source live")
-    run.add_argument("--device", help="audio input: index or name from `jamalong devices` (default: system input)")
+    run.add_argument("--device", help="audio input: index or name from `elfjamalong devices` (default: system input)")
     run.add_argument("--input-channel", type=int, default=1, help="which input channel the guitar is on (default 1)")
     run.add_argument("--gate-db", type=float, default=-50.0, help="ignore input quieter than this (default -50 dBFS)")
     run.add_argument("--tail", type=float, default=4.0, help="keep playing this many seconds after you stop (default 4)")
@@ -385,14 +385,14 @@ def main(argv: list[str] | None = None) -> int:
     render = sub.add_parser("render", help="write a melody for a typed progression to a MIDI file")
     render.add_argument("--chords", default="Am F C G")
     render.add_argument("--bars", type=int, default=16)
-    render.add_argument("-o", "--output", default="jamalong.mid")
+    render.add_argument("-o", "--output", default="elfjamalong.mid")
     melody_opts(render)
     render.set_defaults(fn=cmd_render)
 
-    sub.add_parser("capture", help="keep the last bars the running JamAlong played").set_defaults(fn=cmd_capture)
+    sub.add_parser("capture", help="keep the last bars the running ElfJamAlong played").set_defaults(fn=cmd_capture)
 
-    # Saved settings: ./jamalong.toml, e.g.  [run]  source = "live"  roles = "lead,bass"
-    config = Path("jamalong.toml")
+    # Saved settings: ./elfjamalong.toml, e.g.  [run]  source = "live"  roles = "lead,bass"
+    config = Path("elfjamalong.toml")
     if config.exists():
         saved = tomllib.loads(config.read_text())
         for name, parser in (("run", run), ("demo", demo), ("render", render)):

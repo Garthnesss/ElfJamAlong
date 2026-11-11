@@ -44,7 +44,7 @@ guard status == noErr, processObject != kAudioObjectUnknown else {
 // A private, unmuted, mono tap of just that process.
 let tapDescription = CATapDescription(monoMixdownOfProcesses: [processObject])
 tapDescription.uuid = UUID()
-tapDescription.name = "JamAlong tap"
+tapDescription.name = "ElfJamAlong tap"
 tapDescription.isPrivate = true
 tapDescription.muteBehavior = .unmuted
 var tapID = AudioObjectID(kAudioObjectUnknown)
@@ -72,7 +72,7 @@ guard status == noErr, let uid = outputUID?.takeRetainedValue() as String? else 
 }
 
 let aggregate: [String: Any] = [
-    kAudioAggregateDeviceNameKey: "JamAlong tap",
+    kAudioAggregateDeviceNameKey: "ElfJamAlong tap",
     kAudioAggregateDeviceUIDKey: UUID().uuidString,
     kAudioAggregateDeviceMainSubDeviceKey: uid,
     kAudioAggregateDeviceIsPrivateKey: true,

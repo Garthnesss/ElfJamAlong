@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import mido
 
-PORT_NAME = "JamAlong"
+PORT_NAME = "ElfJamAlong"
 
 
 class MidiOut:

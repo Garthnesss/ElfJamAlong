@@ -1,5 +1,5 @@
 [project]
-name = "jamalong"
+name = "elfjamalong"
 version = "0.1.0"
 description = "Plays a MIDI melody along with live guitar chords, in key and in time."
 readme = "README.md"
@@ -13,7 +13,7 @@ dependencies = [
 ]
 
 [project.scripts]
-jamalong = "jamalong.cli:main"
+elfjamalong = "elfjamalong.cli:main"
 
 [build-system]
 requires = ["uv_build>=0.13.7,<0.14.0"]

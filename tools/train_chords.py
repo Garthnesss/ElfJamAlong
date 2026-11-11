@@ -6,7 +6,7 @@ A small network scores "is this a major / minor chord on C?" and is applied to a
 12 transpositions of the features, so every root shares the same weights. Without
 --final it trains on players 00-03 and reports accuracy on players 04-05, whom it
 has never heard. With --final it trains on everyone and writes
-src/jamalong/chord_model.npz.
+src/elfjamalong/chord_model.npz.
 """
 
 from __future__ import annotations
@@ -24,7 +24,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).parent))
 from bench_guitarset import lead_sheet, reduce  # noqa: E402
 
-from jamalong.features import N_FEATURES, ChromaBands, rotate  # noqa: E402
+from elfjamalong.features import N_FEATURES, ChromaBands, rotate  # noqa: E402
 
 HOP = 2048
 SMOOTH_S = 0.15
@@ -162,14 +162,14 @@ def main() -> int:
 
     if args.final:
         p = train(np.concatenate([x, xm]), np.concatenate([y, y]), args.hidden, args.epochs)
-        out = Path(__file__).resolve().parents[1] / "src" / "jamalong" / "chord_model.npz"
+        out = Path(__file__).resolve().parents[1] / "src" / "elfjamalong" / "chord_model.npz"
         np.savez(out, **p)
         print(f"wrote {out}")
         return 0
 
     test = player >= 4
     # Baseline on the same frames: harmonic triad templates on the summed registers.
-    from jamalong.chords import _chord_templates
+    from elfjamalong.chords import _chord_templates
 
     _, templates = _chord_templates()
     summed = x[test].reshape(-1, 3, 12).sum(axis=1)

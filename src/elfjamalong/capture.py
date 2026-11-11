@@ -26,7 +26,7 @@ def write_midi(notes: list[PlayedNote], bars: int, bpm: float, path: Path) -> No
             off = min(round((n.start_beat + n.length_beats) * TICKS), bars * 4 * TICKS)
             events.append((on, 1, mido.Message("note_on", note=n.pitch, velocity=n.velocity)))
             events.append((off, 0, mido.Message("note_off", note=n.pitch)))
-        track = mido.MidiTrack([mido.MetaMessage("track_name", name=f"JamAlong {voice}", time=0)])
+        track = mido.MidiTrack([mido.MetaMessage("track_name", name=f"ElfJamAlong {voice}", time=0)])
         last = 0
         for tick, _, msg in sorted(events, key=lambda e: (e[0], e[1])):
             track.append(msg.copy(time=tick - last))
@@ -82,7 +82,7 @@ def to_live_clip(notes: list[PlayedNote], bars: int, track_name: str, clip_name:
 
 
 def capture(notes: list[PlayedNote], bars: int, bpm: float, label: str, folder: Path,
-            live_track: str | None = "JamAlong") -> list[str]:
+            live_track: str | None = "ElfJamAlong") -> list[str]:
     """Save a capture. Returns human-readable lines saying where it went."""
     if not notes:
         return ["nothing to capture yet"]
