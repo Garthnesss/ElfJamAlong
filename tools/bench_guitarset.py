@@ -76,6 +76,7 @@ def main() -> int:
     ap.add_argument("--confusions", type=int, default=12)
     ap.add_argument("--players", default="", help="only these player numbers, e.g. 4,5")
     ap.add_argument("--model", type=Path, help="use this model file instead of the shipped one")
+    ap.add_argument("--progressions", default="", help="only these progression numbers (1-3), e.g. 3")
     args = ap.parse_args()
     settings = {k: json.loads(v) for k, v in (s.split("=", 1) for s in args.set)}
 
@@ -86,17 +87,17 @@ def main() -> int:
     if args.players:
         keep = {int(p) for p in args.players.split(",")}
         jams = [n for n in jams if int(Path(n).name[:2]) in keep]
+    if args.progressions:
+        jams = [n for n in jams if Path(n).name.split("_")[1].split("-")[0][-1] in args.progressions.split(",")]
     if args.model:
-        import elfjamalong.chords as chords_module
-
-        chords_module.MODEL_PATH = args.model
-        chords_module.ChordModel.__init__.__defaults__ = (args.model,)
+        settings["model_path"] = str(args.model)
     if args.limit:
         jams = jams[:: max(1, len(jams) // args.limit)][: args.limit]
 
     totals = Counter()
     by_style: dict[str, Counter] = defaultdict(Counter)
     confusion = Counter()
+    reaction: list[float] = []
     for name in jams:
         stem = Path(name).stem
         wav_name = wavs.get(stem + "_mic.wav")
@@ -126,6 +127,16 @@ def main() -> int:
                     counter["settled"] += got == want
             if got != want and t - seg[0] >= 0.5:
                 confusion[(str(want), str(got))] += 1
+        # How long after each chord change the right chord first appears, and how often the answer changes.
+        totals["flips"] += sum(a != b for a, b in zip(heard, heard[1:]))
+        for start, end, label in sheet[1:]:
+            want = reduce(label)
+            if want is None:
+                continue
+            totals["changes"] += 1
+            hit = next((t for t, got in zip(grid, heard) if start <= t < end and got == want), None)
+            if hit is not None:
+                reaction.append(hit - start)
 
     def line(label: str, c: Counter) -> str:
         return (f"{label:8s} root+quality {100 * c['full'] / c['frames']:5.1f}%   root {100 * c['root'] / c['frames']:5.1f}%"
@@ -133,6 +144,10 @@ def main() -> int:
 
     print(f"{len(jams)} excerpts, settings {settings or 'default'}")
     print(line("ALL", totals))
+    if reaction:
+        print(f"reaction: median {np.median(reaction):.2f} s, mean {np.mean(reaction):.2f} s to the right chord after a change "
+              f"(reached in {100 * len(reaction) / totals['changes']:.0f}% of chords); "
+              f"{totals['flips'] / max(1, totals['changes']):.2f} reported changes per real change")
     for style in sorted(by_style):
         print(line(style, by_style[style]))
     if args.confusions:

@@ -38,10 +38,14 @@ class Chord:
 
     @classmethod
     def parse(cls, text: str) -> "Chord":
+        """'Am', 'F#', 'Bb'. Richer names land on their triad: 'G7' -> G, 'Dm7' -> Dm."""
         t = text.strip()
-        if t.endswith("m") and not t.endswith("dim"):
-            return cls(parse_note(t[:-1]), "min")
-        return cls(parse_note(t), "maj")
+        root_len = 2 if len(t) > 1 and t[1] in "#b" else 1
+        root, rest = parse_note(t[:root_len]), t[root_len:].lower()
+        if rest.startswith(("dim", "aug", "+", "o")):
+            raise ValueError(f"only major and minor chords are supported: {text!r}")
+        minor = rest.startswith(("m", "-")) and not rest.startswith("maj")
+        return cls(root, "min" if minor else "maj")
 
 
 @dataclass(frozen=True)

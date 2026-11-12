@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from typing import Callable, Protocol
 
 from .melody import Context, MelodyGenerator
-from .theory import Chord, Key
+from .theory import Chord, Key, scale_for
 
 Harmony = tuple[Chord, Key | None]
 
@@ -54,11 +54,13 @@ class Engine:
         sink_or_harmony,
         harmony: Callable[[], Harmony | None] | None = None,
         history_bars: int = 64,
+        tracker=None,  # a loop.ProgressionTracker: predicts the chord of a repeating progression
     ):
         if harmony is None:  # Engine(voices, harmony)
             self.voices, self.harmony = voices, sink_or_harmony
         else:  # Engine(generator, sink, harmony): a single lead voice
             self.voices, self.harmony = [Voice("lead", voices, sink_or_harmony)], harmony
+        self.tracker = tracker
         self._step: int | None = None
         self._idle = True
         self.history: deque[PlayedNote] = deque()
@@ -69,6 +71,8 @@ class Engine:
         for v in self.voices:
             v.release()
             v.generator.reset()
+        if self.tracker is not None:
+            self.tracker.reset()
 
     def tick(self, beat: float) -> None:
         for v in self.voices:
@@ -90,8 +94,16 @@ class Engine:
             return
         self._idle = False
         chord, key = state
-        ctx = Context(step, chord, key)
+        next_chord = None
+        if self.tracker is not None:
+            chord, next_chord = self.tracker.update(step, chord)
+        ctx = Context(step, chord, key, next_chord)
+        allowed = scale_for(chord, key)
         for v in self.voices:
+            # A note held from the previous chord that the new harmony does not allow is cut.
+            if v._sounding is not None and v._sounding % 12 not in allowed:
+                v.release()
+                self._shorten_last(v.name, step / 4)
             event = v.generator.step(ctx)
             if event is None:
                 continue
@@ -103,6 +115,16 @@ class Engine:
                 self.history.append(PlayedNote(v.name, step / 4, event.pitch, event.velocity, event.length_steps / 4))
                 while self.history and self.history[0].start_beat < step / 4 - self._history_beats:
                     self.history.popleft()
+
+    def _shorten_last(self, voice: str, end_beat: float) -> None:
+        """Record that `voice`'s most recent note was cut off at `end_beat`."""
+        with self._lock:
+            for i in range(len(self.history) - 1, -1, -1):
+                n = self.history[i]
+                if n.voice == voice:
+                    length = max(0.0, min(n.length_beats, end_beat - n.start_beat))
+                    self.history[i] = PlayedNote(n.voice, n.start_beat, n.pitch, n.velocity, length)
+                    return
 
     def last_bars(self, bars: int) -> tuple[list[PlayedNote], int]:
         """Notes from the last `bars` complete bars, re-timed to start at beat 0.

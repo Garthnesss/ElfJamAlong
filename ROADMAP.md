@@ -16,19 +16,21 @@ The detector must be trusted before anything is built on it.
 - ☐ **Link Audio input.** Check in Live 12.4 whether one track can be sent over Link Audio. If so, add a receiver helper and a `--source link` input: the guitar alone, beat-aligned, with none of our own notes in it. This would retire the tap for Live users.
 - ☐ Play it with a real guitar through an interface. Record the session as a new test fixture.
 - ☐ Hear it with its own notes audible and Link on. Close out every BUILT NOT TESTED item in STATUS.md.
-- ☐ Fix major/minor confusion (the largest single error).
-- ☐ Faster reaction: a short window for strum onsets alongside the long one for pitch.
+- ✅ Steadier, quicker decisions: a belief filter replaced "four frames in a row" (+2.6 points on unseen players, 2026-11-12).
+- ☐ **More varied training audio.** The classifier is limited by data, not by its features or size (see STATUS.md, "What was tried"). GuitarSet has 15 progressions; minor chords are right 48% of the time against 73% for major. Candidates: GuitarSet's pickup recordings of the same takes, and any other chord-labelled guitar audio whose licence allows it.
+- ☐ Faster reaction. Now 0.27 s on the Live loop; the 0.19 s analysis window is the floor. Loop prediction (M3) hides the delay when the progression repeats.
 - ☐ Sevenths, sus chords and power chords as their own classes, so the scale choice can use them.
 - ☐ Latency calibration for `--offset-ms`.
 
-**Done when:** on held-out GuitarSet rock and singer-songwriter excerpts, 90% correct half a second after a change, and a real-guitar session through Live has been heard and recorded.
+**Done when:** on held-out GuitarSet rock and singer-songwriter excerpts, 90% correct half a second after a change, and a real-guitar session through Live has been heard and recorded. (The first half is met on unseen players: 92% and 94%. It is not yet shown on unseen progressions.)
 
 ## M3 — Know the loop
 Guitar loops repeat. Once a progression has gone round twice, predict the next chord before it is played.
 
-- ☐ Detect the loop length and remember the progression.
-- ☐ Give generators the next chord, so the lead can approach it and the bass can walk into it.
-- ☐ Fall back to pure following the moment the player leaves the loop.
+- ✅ Detect the loop length and remember the progression (`--predict`, off by default until heard in Live).
+- ◐ Give generators the next chord: the bass walks into it; the lead does not use it yet.
+- ✅ Fall back to pure following the moment the player leaves the loop.
+- ☐ Hear it in Live, then make it the default.
 - ☐ Generate ahead of the clock with overlap, so a late decision still has notes to play (the StreamMUSE approach).
 
 **Done when:** on a looping progression, the first note of each bar is over the new chord, not the old one.

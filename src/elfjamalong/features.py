@@ -10,6 +10,7 @@ import numpy as np
 
 BANDS = ((75.0, 220.0), (220.0, 660.0), (660.0, 2000.0))
 N_FEATURES = 12 * len(BANDS)
+SMOOTH_S = 0.07  # time constant of the feature smoothing; the classifier is trained with the same value
 
 
 class ChromaBands:

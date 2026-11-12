@@ -35,6 +35,16 @@ Compiled 2026-11-11 from web searches and the pages linked below. "Checked" mean
 - **Chord ID** analyses a recorded audio or MIDI region and writes its chords to the Chord Track; Session Players then follow. 12.3 improved its accuracy. Search only: https://synthanatomy.com/2026/06/apple-logic-pro-12.html
 - Still works on **recorded regions**, not live input, as far as the coverage shows. So Logic does not do what ElfJamAlong does, but Logic users already have "chords from my recording → a band".
 
+## Added 2026-11-12
+
+- **Link Audio API, read from `LinkAudio.hpp`.** Construct `LinkAudio(bpm, peerName)`, call `enableLinkAudio(true)`, list senders with `channels()` (each has `id`, `name`, `peerName`; `setChannelsChangedCallback` reports changes), and subscribe with `LinkAudioSource(link, channelId, callback)`. The callback gets interleaved 16-bit samples with `numChannels`, `numFrames`, `sampleRate`, and the session beat time of the buffer. Ableton's example app is `LinkAudioHut` (CMake, in `examples/`). A receiver helper for ElfJamAlong is therefore small: pick a channel by name, mix to mono, write float32 to stdout. https://github.com/Ableton/link
+- **Per-track sending from Live is still unconfirmed.** CDM's hands-on says Note and Move "let you select individual tracks for Link Audio as well as the main mix" and that Live has a Link Audio page in Settings; it does not say what Live itself can send. Still needs a look in Live 12.4. https://cdm.link/ableton-live-12-4-adds-link-audio-updated-effects-hands-on-details/
+- **Void-LinkAudio** (Julien Bayle): open-source Link Audio for Max, Pure Data, TouchDesigner, VCV Rack and openFrameworks, with VST/AU/CLAP plug-ins distributed separately; validated against Live 12.4. GPL-2.0-or-later. No command-line receiver, but its openFrameworks receive example is a second reference. One note there: a 44.1 kHz receiver against a 48 kHz sender dropped about 8% of audio, so a receiver should run at the sender's rate. https://github.com/gluon/Void-LinkAudio
+- **No Python bindings for Link Audio** were found (one search). A Rust port of Link with a Link Audio example exists: https://github.com/anweiss/ableton-link-rs (not read).
+- **POP909 is MIT-licensed**: the repository's LICENSE file reads "MIT License, Copyright (c) 2020 Music X Lab". That covers the dataset files; the songs themselves are commercial pop, so for a sold product this is weaker than it looks. Its chord and key labels were partly made by algorithm. https://github.com/music-x-lab/POP909-Dataset
+- **Chord recognition:** a DAFx 2026 paper uses pseudo-labelling and distillation to improve rare chord qualities and mentions low-latency DAW use (search summary only): https://www.dafx.de/paper-archive/2026/papers/DAFx26_paper_22.pdf. Pseudo-labelling unlabelled guitar audio with a large offline model is a way round our shortage of varied training data. No new paper on causal guitar chord recognition was found.
+- **Our own finding:** GuitarSet's 15 progressions are shared by all players, so any model input longer than about a chord's length learns the progressions and scores well for the wrong reason. Details in STATUS.md.
+
 ## Background that did not change in this period
 - **No shipping product was found** that listens to a live guitar and plays MIDI accompaniment in a DAW. Closest: ReChord (MIDI-keyboard arranger, rule-based), Chordify/Moises (analyse files). One search, not exhaustive: https://gearspace.com/threads/rechord-a-vst-software-arranger-with-real-time-auto-accompaniment.1374965/
 - **Real-time chord recognition:** no new paper found for guitar. One hobby project reports 0.31 s strum-to-chord with a CNN on log-mel input, close to our 0.3 s. Search only: https://github.com/Breakdown08/chordfinder
@@ -46,7 +56,7 @@ None of these were confirmed. Each needs its own licence read before use, and be
 
 | Dataset | What it has | Status |
 |---|---|---|
-| POP909 | 909 pop songs: melody, accompaniment, chords, key | licence not seen |
+| POP909 | 909 pop songs: melody, accompaniment, chords, key | MIT (repository LICENSE, read 2026-11-12); underlying songs are commercial pop |
 | Hooktheory / TheoryTab lead sheets | ~11k melody + chord snippets | scraped from a commercial site; assume not usable commercially |
 | EWLD / Wikifonia | ~5k lead sheets | copyrighted songs; unclear |
 | TAVERN | classical variations with harmony labels | licence not seen; wrong style for guitar jams |

@@ -5,7 +5,8 @@
 A small network scores "is this a major / minor chord on C?" and is applied to all
 12 transpositions of the features, so every root shares the same weights. Without
 --final it trains on players 00-03 and reports accuracy on players 04-05, whom it
-has never heard. With --final it trains on everyone and writes
+has never heard. --hold-progression N also keeps one of each style's three chord
+progressions out of training and tests on that one only (the stricter score). With --final it trains on everyone and writes
 src/elfjamalong/chord_model.npz.
 """
 
@@ -24,20 +25,19 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).parent))
 from bench_guitarset import lead_sheet, reduce  # noqa: E402
 
-from elfjamalong.features import N_FEATURES, ChromaBands, rotate  # noqa: E402
+from elfjamalong.features import N_FEATURES, SMOOTH_S, ChromaBands, rotate  # noqa: E402
 
 HOP = 2048
-SMOOTH_S = 0.15
 
 
 def extract(folder: Path, cache: Path):
     if cache.exists():
         d = np.load(cache)
-        return d["x"], d["xm"], d["y"], d["player"], d["since"]
+        return d["x"], d["xm"], d["y"], d["player"], d["since"], d["progression"]
     notes = zipfile.ZipFile(folder / "annotation.zip")
     audio = zipfile.ZipFile(folder / "audio_mono-mic.zip")
     wavs = {Path(n).name: n for n in audio.namelist() if n.endswith(".wav")}
-    xs, xms, ys, players, sinces = [], [], [], [], []
+    xs, xms, ys, players, sinces, progressions = [], [], [], [], [], []
     rng = np.random.default_rng(0)
     for name in sorted(n for n in notes.namelist() if n.endswith("_comp.jams")):
         stem = Path(name).stem
@@ -73,10 +73,12 @@ def extract(folder: Path, cache: Path):
             ys.append(want.root + (12 if want.quality == "min" else 0))
             players.append(int(stem[:2]))
             sinces.append(t - seg[0])
+            progressions.append(stem.split("_")[1].split("-")[0])  # e.g. 'Rock2'
     x, xm, y = np.array(xs, dtype=np.float32), np.array(xms, dtype=np.float32), np.array(ys)
     player, since = np.array(players), np.array(sinces, dtype=np.float32)
-    np.savez_compressed(cache, x=x, xm=xm, y=y, player=player, since=since)
-    return x, xm, y, player, since
+    progression = np.array(progressions)
+    np.savez_compressed(cache, x=x, xm=xm, y=y, player=player, since=since, progression=progression)
+    return x, xm, y, player, since, progression
 
 
 def all_rotations(x: np.ndarray) -> np.ndarray:
@@ -156,8 +158,10 @@ def main() -> int:
     ap.add_argument("--final", action="store_true")
     ap.add_argument("--hidden", type=int, default=32)
     ap.add_argument("--epochs", type=int, default=25)
+    ap.add_argument("--hold-progression", type=int, choices=[1, 2, 3],
+                    help="also keep this progression number of every style out of training, and test only on it")
     args = ap.parse_args()
-    x, xm, y, player, since = extract(args.folder, args.folder / "features_v2.npz")
+    x, xm, y, player, since, progression = extract(args.folder, args.folder / "features_v3.npz")
     print(f"{len(x)} frames ({len(x) * HOP / 44100 / 60:.0f} min), players {sorted(set(player.tolist()))}")
 
     if args.final:
@@ -168,6 +172,14 @@ def main() -> int:
         return 0
 
     test = player >= 4
+    keep = np.ones(len(x), dtype=bool)
+    if args.hold_progression:
+        # GuitarSet has 15 progressions (3 per style) that every player plays. A model
+        # can learn them; this split scores chords in an order it has never met.
+        held = np.char.endswith(progression, str(args.hold_progression))
+        keep = test & held | ~test & ~held
+        x, xm, y, player, since, test = x[keep], xm[keep], y[keep], player[keep], since[keep], test[keep]
+        print(f"holding out progression {args.hold_progression}: {int((~test).sum())} training frames, {int(test.sum())} test frames")
     # Baseline on the same frames: harmonic triad templates on the summed registers.
     from elfjamalong.chords import _chord_templates
 
@@ -179,7 +191,8 @@ def main() -> int:
     report("templates (players 04-05)", scores.argmax(axis=1), y[test], since[test])
 
     p = train(np.concatenate([x[~test], xm[~test]]), np.concatenate([y[~test], y[~test]]), args.hidden, args.epochs)
-    np.savez(args.folder / "model_holdout.npz", **p)  # for an honest live benchmark on players 04-05
+    suffix = f"_p{args.hold_progression}" if args.hold_progression else ""
+    np.savez(args.folder / f"model_holdout{suffix}.npz", **p)  # for an honest live benchmark on players 04-05
     report("learned, seen players 00-03", predict(p, x[~test]), y[~test], since[~test])
     report("learned, new players 04-05", predict(p, x[test]), y[test], since[test])
     report("  same, lead note hidden", predict(p, xm[test]), y[test], since[test])

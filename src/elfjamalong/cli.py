@@ -32,19 +32,27 @@ def _generator(args) -> RuleBasedMelody:
     return RuleBasedMelody(low=args.low, high=args.high, density=args.density, seed=args.seed)
 
 
-def _voices(args, midi, wrap=lambda sink, role: sink) -> list[Voice]:
-    """One voice per requested role. All share a channel unless --split-channels."""
+def _roles(args) -> list[str]:
     roles = [r.strip() for r in args.roles.split(",") if r.strip()] if isinstance(args.roles, str) else list(args.roles)
     unknown = [r for r in roles if r not in ROLES]
     if unknown or not roles:
         raise SystemExit(f"--roles takes any of {', '.join(ROLES)}; got {args.roles!r}")
-    makers = {
+    return roles
+
+
+def _makers(args) -> dict:
+    return {
         "lead": lambda: _generator(args),
         "bass": lambda: BassLine(seed=args.seed),
         "arp": lambda: Arpeggio(seed=args.seed),
     }
+
+
+def _voices(args, midi, wrap=lambda sink, role: sink) -> list[Voice]:
+    """One voice per requested role. All share a channel unless --split-channels."""
+    makers = _makers(args)
     voices = []
-    for role in roles:
+    for role in _roles(args):
         channel = args.channel + (ROLES.index(role) if args.split_channels else 0)
         voices.append(Voice(role, makers[role](), wrap(midi.on_channel(channel), role)))
     return voices
@@ -208,7 +216,13 @@ def cmd_run(args) -> int:
             return None
         return detector.chord, detector.key
 
-    engine = Engine(_voices(args, midi, lambda sink, role: _TellDetector(sink, detector, role == "lead")), harmony)
+    tracker = None
+    if args.predict:
+        from .loop import ProgressionTracker
+
+        tracker = ProgressionTracker(lambda: clock.tempo)
+    engine = Engine(_voices(args, midi, lambda sink, role: _TellDetector(sink, detector, role == "lead")), harmony,
+                    tracker=tracker)
     stop = _install_stop()
     capturer = _Capturer(engine, clock, args, lambda: str(detector.key or ""))
     print(f"Listening: {source.label} @ {source.sample_rate:.0f} Hz")
@@ -219,10 +233,11 @@ def cmd_run(args) -> int:
         shown = None
         while not stop.wait(0.2):
             capturer.poll()
-            now = (str(detector.chord) if detector.active(args.tail) else "-", str(detector.key or "?"))
+            loop = f"loop {tracker.loop_steps // 16} bars" if tracker and tracker.loop_steps else ""
+            now = (str(detector.chord) if detector.active(args.tail) else "-", str(detector.key or "?"), loop)
             if now != shown:
                 shown = now
-                print(f"  chord {now[0]:<4} key {now[1]:<9} {clock.tempo:6.1f} BPM  link peers {clock.peers}", flush=True)
+                print(f"  chord {now[0]:<4} key {now[1]:<9} {clock.tempo:6.1f} BPM  link peers {clock.peers}  {loop}", flush=True)
 
     threading.Thread(target=status, daemon=True).start()
     source.start(detector.feed)
@@ -279,57 +294,42 @@ def cmd_capture(_args) -> int:
 
 
 def cmd_render(args) -> int:
-    """Offline: write the melody (and the chords, on a second track) to a MIDI file."""
+    """Offline: write what each role plays (and the chords, on a last track) to a MIDI file."""
     import mido
+
+    from .capture import TICKS, midi_file
 
     chords = [Chord.parse(c) for c in args.chords.split()]
     key = Key.parse(args.key) if args.key else _key_of(chords)
-    tpb = 480
-    events: list[tuple[int, mido.Message]] = []
 
-    class Sink:
-        now = 0
+    class Null:
+        def note_on(self, pitch, velocity): ...
+        def note_off(self, pitch): ...
 
-        def note_on(self, pitch, velocity):
-            events.append((self.now, mido.Message("note_on", note=pitch, velocity=velocity)))
-
-        def note_off(self, pitch):
-            events.append((self.now, mido.Message("note_off", note=pitch)))
-
-    sink = Sink()
+    makers = _makers(args)
+    voices = [Voice(role, makers[role](), Null()) for role in _roles(args)]
     position = {"bar": 0}
-    engine = Engine(_generator(args), sink, lambda: (chords[position["bar"] % len(chords)], key))
-    ticks_total = args.bars * 4 * tpb
-    for tick in range(0, ticks_total, 10):
-        position["bar"] = tick // (4 * tpb)
-        sink.now = tick
-        engine.tick(tick / tpb)
-    sink.now = ticks_total
+    engine = Engine(voices, lambda: (chords[position["bar"] % len(chords)], key), history_bars=args.bars + 1)
+    for tick in range(0, args.bars * 4 * TICKS, 10):
+        position["bar"] = tick // (4 * TICKS)
+        engine.tick(tick / TICKS)
     engine.stop()
+    notes = list(engine.history)
 
-    def to_track(evts, name):
-        track = mido.MidiTrack()
-        track.append(mido.MetaMessage("track_name", name=name, time=0))
-        last = 0
-        for t, msg in sorted(evts, key=lambda e: (e[0], e[1].type == "note_on")):
-            track.append(msg.copy(time=t - last))
-            last = t
-        return track
-
-    chord_events = []
+    mid = midi_file(notes, args.bars, args.bpm, order=_roles(args))
+    track = mido.MidiTrack([mido.MetaMessage("track_name", name="Chords", time=0)])
+    bar_ticks = 4 * TICKS
     for bar in range(args.bars):
         c = chords[bar % len(chords)]
-        notes = [48 + c.root] + [60 + (pc - 0) % 12 for pc in sorted(c.pitch_classes)]
-        for n in notes:
-            chord_events.append((bar * 4 * tpb, mido.Message("note_on", note=n, velocity=60, channel=1)))
-            chord_events.append(((bar + 1) * 4 * tpb - 10, mido.Message("note_off", note=n, channel=1)))
-
-    mid = mido.MidiFile(ticks_per_beat=tpb)
-    tempo_track = mido.MidiTrack([mido.MetaMessage("set_tempo", tempo=mido.bpm2tempo(args.bpm), time=0)])
-    mid.tracks.extend([tempo_track, to_track(events, "ElfJamAlong melody"), to_track(chord_events, "Chords")])
+        pitches = [48 + c.root] + [60 + pc for pc in sorted(c.pitch_classes)]
+        for i, n in enumerate(pitches):
+            track.append(mido.Message("note_on", note=n, velocity=60, channel=15, time=10 if bar and i == 0 else 0))
+        for i, n in enumerate(pitches):
+            track.append(mido.Message("note_off", note=n, channel=15, time=bar_ticks - 10 if i == 0 else 0))
+    mid.tracks.append(track)
     mid.save(args.output)
-    notes = sum(1 for _, m in events if m.type == "note_on")
-    print(f"Wrote {args.output}: {args.bars} bars, {notes} melody notes, key {key}")
+    counts = ", ".join(f"{sum(n.voice == r for n in notes)} {r}" for r in _roles(args))
+    print(f"Wrote {args.output}: {args.bars} bars, {counts} notes, key {key}")
     return 0
 
 
@@ -372,6 +372,8 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument("--tail", type=float, default=4.0, help="keep playing this many seconds after you stop (default 4)")
     run.add_argument("--follow-transport", action="store_true",
                      help="only play while the DAW is playing (needs Link Start Stop Sync)")
+    run.add_argument("--predict", action="store_true",
+                     help="once a progression has repeated, play over the chord that comes next instead of waiting to hear it")
     melody_opts(run)
     live_opts(run)
     run.set_defaults(fn=cmd_run)
@@ -386,6 +388,7 @@ def main(argv: list[str] | None = None) -> int:
     render.add_argument("--chords", default="Am F C G")
     render.add_argument("--bars", type=int, default=16)
     render.add_argument("-o", "--output", default="elfjamalong.mid")
+    render.add_argument("--roles", default="lead", help="comma list of lead, bass, arp (default lead)")
     melody_opts(render)
     render.set_defaults(fn=cmd_render)
 
@@ -396,7 +399,11 @@ def main(argv: list[str] | None = None) -> int:
     if config.exists():
         saved = tomllib.loads(config.read_text())
         for name, parser in (("run", run), ("demo", demo), ("render", render)):
-            parser.set_defaults(**{k.replace("-", "_"): v for k, v in saved.get(name, {}).items()})
+            settings = {k.replace("-", "_"): v for k, v in saved.get(name, {}).items()}
+            known = {a.dest for a in parser._actions}
+            for k in sorted(set(settings) - known):
+                print(f"elfjamalong.toml: [{name}] has no option '{k}' (ignored)", file=sys.stderr)
+            parser.set_defaults(**{k: v for k, v in settings.items() if k in known})
 
     args = p.parse_args(argv)
     return args.fn(args)

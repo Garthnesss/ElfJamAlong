@@ -23,6 +23,7 @@ class Context:
     step: int  # global 16th-note index; step % 16 == 0 is a downbeat
     chord: Chord
     key: Key | None
+    next_chord: Chord | None = None  # the next bar's chord, when the progression is a known loop
 
 
 @dataclass(frozen=True)

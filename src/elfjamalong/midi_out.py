@@ -19,7 +19,8 @@ class MidiOut:
         self._port.send(mido.Message("note_off", note=pitch, channel=self.channel))
 
     def close(self) -> None:
-        self._port.send(mido.Message("control_change", control=123, value=0, channel=self.channel))
+        for channel in range(16):  # roles may be on other channels (--split-channels)
+            self._port.send(mido.Message("control_change", control=123, value=0, channel=channel))
         self._port.close()
 
     def on_channel(self, channel: int) -> "ChannelSink":

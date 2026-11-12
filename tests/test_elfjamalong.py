@@ -286,3 +286,172 @@ def test_own_bass_and_arp_alone_do_not_count_as_the_player():
         det.feed(audio[i : i + 512])
         now[0] += 512 / SR
     assert det.chord is None and not det.active(4.0)
+
+
+# ------------------------------------------------------------ changes of 2026-11-12
+
+
+def test_chord_names_with_extensions_land_on_their_triad():
+    assert [str(Chord.parse(c)) for c in ["G7", "Dm7", "Cmaj7", "Bb", "F#m", "Asus4", "Ebm"]] == \
+        ["G", "Dm", "C", "A#", "F#m", "A", "D#m"]
+    with pytest.raises(ValueError):
+        Chord.parse("Bdim")
+
+
+def test_held_note_is_cut_when_the_new_chord_does_not_allow_it():
+    """A long note from the previous bar must not ring on over a chord whose scale excludes it."""
+    from elfjamalong.engine import Voice
+    from elfjamalong.melody import NoteEvent
+
+    class OneLongNote:
+        def step(self, ctx):
+            return NoteEvent(67, 100, 32) if ctx.step == 0 else None  # G, two bars long
+
+        def reset(self): ...
+
+    sink = Sink()
+    bar = [0]
+    key = Key.parse("A minor")
+    chords = [Chord.parse("Am"), Chord.parse("E")]  # E major swaps G for G#
+    eng = Engine([Voice("lead", OneLongNote(), sink)], lambda: (chords[bar[0]], key))
+    beat = 0.0
+    while beat < 8:
+        bar[0] = int(beat // 4)
+        eng.tick(beat)
+        if beat < 3.9:
+            assert sink.sounding == {67}
+        elif beat > 4.05:
+            assert not sink.sounding
+        beat += 0.01
+    notes, _ = eng.last_bars(1)
+    assert eng.history[0].length_beats == 4.0  # the capture shows the shortened note
+
+
+def _loop_run(progression, bars, lag=2, tracker=None):
+    """Feed a tracker what a detector would report: the true chord, `lag` steps late."""
+    from elfjamalong.loop import ProgressionTracker
+
+    tracker = tracker or ProgressionTracker(lambda: 120.0)
+    rows = []
+    for step in range(bars * 16):
+        truth = progression[(step // 16) % len(progression)]
+        heard = progression[(max(step - lag, 0) // 16) % len(progression)]
+        now, nxt = tracker.update(step, heard)
+        rows.append((step, truth, heard, now, nxt))
+    return tracker, rows
+
+
+def test_loop_is_predicted_after_two_rounds_and_not_before():
+    prog = [Chord.parse(c) for c in "Am F C G".split()]
+    tracker, rows = _loop_run(prog, 16)
+    early = [r for r in rows if r[0] < 8 * 16 - 1]  # the second round ends at step 127
+    assert all(now == heard and nxt is None for _, _, heard, now, nxt in early)  # pure following
+    late = [r for r in rows if r[0] >= 9 * 16]
+    assert tracker.loop_steps == 64
+    assert all(now == truth for _, truth, _, now, _ in late)  # including the first step of every bar
+    assert any(heard != truth for _, truth, heard, _, _ in late)  # which plain following gets wrong
+    assert all(nxt == prog[(step // 16 + 1) % 4] for step, _, _, _, nxt in late)
+
+
+def test_leaving_the_loop_falls_back_to_following():
+    prog = [Chord.parse(c) for c in "Am F C G".split()]
+    tracker, _ = _loop_run(prog, 12)
+    assert tracker.loop_steps == 64
+    other = Chord.parse("D")
+    answers = [tracker.update(12 * 16 + i, other)[0] for i in range(8)]
+    assert answers == [other] * 8  # it plays what it hears from the first sixteenth
+    assert tracker.loop_steps is None  # and has forgotten the loop
+
+
+def test_a_held_chord_is_not_a_reason_to_react_late():
+    """Three bars of one chord look like a one-bar loop; the change after them must not be delayed."""
+    from elfjamalong.loop import ProgressionTracker
+
+    tracker = ProgressionTracker(lambda: 120.0)
+    am, f = Chord.parse("Am"), Chord.parse("F")
+    for step in range(48):
+        assert tracker.update(step, am)[0] == am
+    assert tracker.loop_steps == 16
+    assert tracker.update(48, f)[0] == f
+
+
+def test_loop_survives_a_change_heard_one_sixteenth_late():
+    prog = [Chord.parse(c) for c in "Am F C G".split()]
+    tracker, _ = _loop_run(prog, 12)
+    for step in range(12 * 16, 14 * 16):  # this round the detector is a sixteenth slower
+        truth = prog[(step // 16) % 4]
+        heard = prog[((step - 3) // 16) % 4]
+        assert tracker.update(step, heard)[0] == truth
+    assert tracker.loop_steps == 64
+
+
+def test_bass_walks_into_the_next_chord_when_the_loop_is_known():
+    from elfjamalong.melody import Context
+    from elfjamalong.roles import BassLine
+
+    key = Key.parse("C major")
+    for seed in range(6):
+        bass = BassLine(seed=seed)
+        notes = {s: bass.step(Context(s, Chord.parse("C"), key, Chord.parse("F"))) for s in range(16)}
+        if notes[14] is not None:  # patterns with a passing note on the last eighth
+            assert abs(notes[14].pitch % 12 - 5) in (1, 2) or abs(notes[14].pitch % 12 - 5) in (10, 11)
+            assert notes[14].pitch % 12 in key.pitch_classes
+
+
+def test_render_writes_one_track_per_role(tmp_path):
+    import mido
+
+    from elfjamalong.cli import main
+
+    out = tmp_path / "jam.mid"
+    assert main(["render", "--chords", "Am F G7 C", "--roles", "lead,bass,arp", "--bars", "8", "--seed", "3",
+                 "-o", str(out)]) == 0
+    mid = mido.MidiFile(out)
+    assert [t.name for t in mid.tracks[1:]] == ["ElfJamAlong lead", "ElfJamAlong bass", "ElfJamAlong arp", "Chords"]
+    for track in mid.tracks[1:]:
+        ons = sum(m.type == "note_on" for m in track)
+        assert ons > 8 and ons == sum(m.type == "note_off" for m in track)
+    assert abs(mid.length - 16.0) < 0.1  # 8 bars at 120 BPM
+
+
+def test_first_chord_after_silence_and_changes_are_prompt():
+    """The belief filter must not make the detector sluggish after a pause."""
+    now = [0.0]
+    det = ChordDetector(SR, clock=lambda: now[0])
+    audio = np.concatenate([strum("Am", 2.0, SR), np.zeros(SR * 3, dtype=np.float32), strum("D", 2.0, SR)])
+    heard_d = None
+    for i in range(0, len(audio), 256):
+        det.feed(audio[i : i + 256])
+        now[0] += 256 / SR
+        if heard_d is None and now[0] > 5.0 and str(det.chord) == "D":
+            heard_d = now[0] - 5.0
+    assert heard_d is not None and heard_d < 0.4, heard_d
+
+
+def test_detector_plus_tracker_puts_bar_starts_on_the_new_chord():
+    """End to end on audio: fourth round of a strummed loop at 120 BPM (a bar is 2 s, a sixteenth 0.125 s)."""
+    from elfjamalong.loop import ProgressionTracker
+
+    names = ["Am", "F", "C", "G"]
+    rng = np.random.default_rng(5)
+    audio = np.concatenate([strum(n, 2.0, SR, strums=4, rng=rng) for n in names * 4])
+    now = [0.0]
+    det = ChordDetector(SR, clock=lambda: now[0])
+    tracker = ProgressionTracker(lambda: 120.0)
+    step_len = int(0.125 * SR)
+    followed = predicted = starts = 0
+    for step in range(16 * 16):
+        chunk = audio[step * step_len : (step + 1) * step_len]
+        if step and det.chord is not None:  # the engine asks at the start of the step
+            now_chord, _ = tracker.update(step, det.chord)
+            if step >= 12 * 16 and step % 16 < 2:  # the first two sixteenths of each bar in round four
+                truth = names[(step // 16) % 4]
+                starts += 1
+                followed += str(det.chord) == truth
+                predicted += str(now_chord) == truth
+        for i in range(0, len(chunk), 512):
+            det.feed(chunk[i : i + 512])
+            now[0] += len(chunk[i : i + 512]) / SR
+    assert tracker.loop_steps == 64
+    assert followed == 0  # plain following is always late here
+    assert starts == 8 and predicted >= 7

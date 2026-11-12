@@ -7,7 +7,7 @@ from pathlib import Path
 
 import numpy as np
 
-from .features import N_FEATURES, ChromaBands, rotate
+from .features import N_FEATURES, SMOOTH_S, ChromaBands, rotate
 from .theory import Chord, Key, TRIADS
 
 # Krumhansl-Kessler key profiles.
@@ -41,8 +41,8 @@ class ChordModel:
     12 transpositions of the input, so every root shares the same weights.
     """
 
-    def __init__(self, path: Path = MODEL_PATH):
-        d = np.load(path)
+    def __init__(self, path: Path | None = None):
+        d = np.load(path or MODEL_PATH)
         self.w1, self.b1, self.w2, self.b2 = d["w1"], d["b1"], d["w2"], d["b2"]
         self.mean, self.std = float(d["mean"]), float(d["std"])
 
@@ -62,6 +62,13 @@ class ChordDetector:
 
     `classifier` is "model" (the trained network), "templates" (triad templates,
     no training data involved) or "auto" (the model if its file is present).
+
+    With the model, the chord is decided by a belief over the 24 chords that is
+    carried from frame to frame: each frame it leaks a little toward the other
+    chords (`stay`), is multiplied by the frame's probabilities (softened by
+    `evidence_power`), and the reported chord changes when another chord's belief
+    leads by `switch_margin`. The template matcher keeps the older rule: the same
+    winner `stable_frames` analyses in a row.
     """
 
     def __init__(
@@ -76,10 +83,14 @@ class ChordDetector:
         key_half_life_s: float = 45.0,
         fixed_key: Key | None = None,
         incumbent_bonus: float | None = None,
-        smooth_s: float = 0.15,
+        smooth_s: float | None = None,
         first_extra_frames: int = 3,
+        stay: float = 0.9,
+        evidence_power: float = 0.35,
+        switch_margin: float = 0.3,
         own_mode: str = "weighted",  # "off" | "weighted"
         classifier: str = "auto",
+        model_path: Path | str | None = None,
         clock=time.monotonic,
     ):
         self.sr = sample_rate
@@ -94,11 +105,16 @@ class ChordDetector:
         self._clock = clock
 
         if classifier == "auto":
-            classifier = "model" if MODEL_PATH.exists() else "templates"
-        self.model = ChordModel() if classifier == "model" else None
+            classifier = "model" if model_path or MODEL_PATH.exists() else "templates"
+        self.model = ChordModel(Path(model_path) if model_path else None) if classifier == "model" else None
         # Confidence is a probability for the model and a correlation for templates.
         self.min_confidence = min_confidence if min_confidence is not None else (0.3 if self.model else 0.75)
-        self.incumbent_bonus = incumbent_bonus if incumbent_bonus is not None else (0.15 if self.model else 0.12)
+        self.incumbent_bonus = incumbent_bonus if incumbent_bonus is not None else 0.12
+        self.stay, self.evidence_power, self.switch_margin = stay, evidence_power, switch_margin
+        self._belief = np.full(24, 1 / 24)
+        self._frames_heard = 0
+        if smooth_s is None:  # the templates were tuned with the longer smoothing
+            smooth_s = SMOOTH_S if self.model else 0.15
 
         self._buf = np.zeros(n_fft, dtype=np.float32)
         self._pending = 0
@@ -174,8 +190,10 @@ class ChordDetector:
     def _analyse(self) -> None:
         recent = self._buf[-self.hop :]
         if float(np.sqrt(np.mean(recent**2))) < self.gate:
-            # Silence: keep the last chord (the engine decides when to stop).
+            # Silence: keep the last chord (the engine decides when to stop), but be
+            # less sure of it, so whatever is played next is picked up quickly.
             self._candidate_count = 0
+            self._belief = 0.8 * self._belief + 0.2 / 24
             return
 
         bands = self._bands
@@ -196,13 +214,42 @@ class ChordDetector:
         if vn == 0:
             return
         template_scores = (self._centred_templates @ v) / vn
-        if self.model is None:
-            scores = template_scores
-        else:
-            if template_scores.max() < self.tonal_min:
-                self._candidate_count = 0
-                return
-            scores = self.model.probabilities(self._smooth)
+        heard = self._by_templates(template_scores) if self.model is None else self._by_model(template_scores)
+        if heard is None:
+            return
+        self.last_heard = self._clock()
+        if self.chord is not None and self.chord == heard:
+            self._key_hist *= self._key_decay
+            for pc in self.chord.pitch_classes:
+                self._key_hist[pc] += 1.0
+            self._distinct.add(self.chord)
+            if self.fixed_key is None and len(self._distinct) >= 2:
+                self.key = estimate_key(self._key_hist)
+
+    def _by_model(self, template_scores: np.ndarray) -> Chord | None:
+        """Update the belief with this frame; returns the frame's leading chord (None: not a chord)."""
+        if template_scores.max() < self.tonal_min:
+            return None
+        probabilities = self.model.probabilities(self._smooth)
+        if probabilities.max() < self.min_confidence:
+            return None
+        b = self.stay * self._belief + (1 - self.stay) / 23 * (1 - self._belief)
+        b *= np.maximum(probabilities, 0.02) ** self.evidence_power
+        self._belief = b = b / b.sum()
+        self._frames_heard += 1
+        best = int(np.argmax(b))
+        lead = self._chords[best]
+        self.confidence = float(b[best])
+        # The very first chord waits a few frames: the analysis window is still
+        # filling and all it has heard is the attack of one strum.
+        if self.chord is None:
+            if self._frames_heard >= self.stable_frames + self.first_extra_frames - 2:
+                self.chord = lead
+        elif lead != self.chord and b[best] > b[self._chords.index(self.chord)] + self.switch_margin:
+            self.chord = lead
+        return lead
+
+    def _by_templates(self, scores: np.ndarray) -> Chord | None:
         if self.chord is not None:
             # The chord we already believe in wins near-ties (fewer false flips).
             scores = scores.copy()
@@ -211,27 +258,16 @@ class ChordDetector:
         self.confidence = float(scores[best])
         if self.confidence < self.min_confidence:
             self._candidate_count = 0
-            return
-
-        self.last_heard = self._clock()
+            return None
         cand = self._chords[best]
         if cand == self._candidate:
             self._candidate_count += 1
         else:
             self._candidate, self._candidate_count = cand, 1
-        # The very first chord needs longer to settle: the analysis window is still
-        # filling and all it has heard is the attack of one strum.
         needed = self.stable_frames + (self.first_extra_frames if self.chord is None else 0)
         if self._candidate_count >= needed and cand != self.chord:
             self.chord = cand
-
-        if self.chord is not None and self.chord == cand:
-            self._key_hist *= self._key_decay
-            for pc in self.chord.pitch_classes:
-                self._key_hist[pc] += 1.0
-            self._distinct.add(self.chord)
-            if self.fixed_key is None and len(self._distinct) >= 2:
-                self.key = estimate_key(self._key_hist)
+        return cand
 
 
 def estimate_key(histogram: np.ndarray) -> Key | None:

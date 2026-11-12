@@ -6,6 +6,7 @@ source = "live"        # listen to Ableton Live's output directly ("device" = an
 roles = "lead,bass"    # any of: lead, bass, arp
 capture-bars = 8
 density = 0.5
+# predict = true       # once a progression has repeated, play over the chord that comes next
 
 [demo]
 roles = "lead,bass"

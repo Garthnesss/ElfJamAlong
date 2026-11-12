@@ -30,7 +30,9 @@ quickest way to check the Ableton routing below.
 uv run elfjamalong render --chords "Am F C G" --bars 16 -o jam.mid
 ```
 
-writes the melody and the chords to a MIDI file you can drag into a DAW.
+writes the melody and the chords to a MIDI file you can drag into a DAW. Add
+`--roles lead,bass,arp` for one track per role. Chord names with extensions are
+accepted and land on their triad (`G7` plays as G, `Dm7` as Dm).
 
 ## Ableton Live setup
 
@@ -68,6 +70,7 @@ Useful options:
 | `--offset-ms 20` | play early to cancel instrument latency |
 | `--tail 2` | stop sooner after the guitar goes quiet |
 | `--follow-transport` | only play while Live is playing (enable Start Stop Sync in Live's Link settings) |
+| `--predict` | once your progression has repeated, play over the chord that comes next instead of waiting to hear it (new, not yet tried in Live) |
 | `--gate-db -40` | ignore more background noise |
 | `--no-link --bpm 96` | run on an internal clock without a DAW |
 
@@ -138,18 +141,23 @@ players the model did not train on:
 
 | | trained model | templates |
 |---|---|---|
-| all styles | 67% | 38% |
-| rock, singer-songwriter | 80-83% | |
-| jazz, bossa nova | 58-65% | |
-| funk | 43% | |
+| all styles | 68% | 38% |
+| rock, singer-songwriter | 81-84% | |
+| jazz, bossa nova | 59-68% | |
+| funk | 45% | |
 
-Half a second after a chord change the all-styles figure is 76%. The shipped
-model is trained on all six players, so it has no held-out score of its own.
+Half a second after a chord change the all-styles figure is 77% (rock 92%,
+singer-songwriter 94%). The right chord appears a median 0.36 s after a change.
+GuitarSet has only 15 chord progressions, which every player plays, so these
+figures are for progressions the model has met; on a progression it has not met
+they are a few points lower (see STATUS.md). The shipped model is trained on all
+six players, so it has no held-out score of its own.
 
 ```bash
 uv run python tools/train_chords.py data/guitarset          # train on 4 players, test on 2
+uv run python tools/train_chords.py data/guitarset --hold-progression 3   # stricter: also an unseen progression
 uv run python tools/train_chords.py data/guitarset --final  # train on all, write the model
-uv run python tools/bench_guitarset.py data/guitarset       # live-pipeline accuracy
+uv run python tools/bench_guitarset.py data/guitarset       # live-pipeline accuracy, reaction time, stability
 ```
 
 These need `annotation.zip` and `audio_mono-mic.zip` from GuitarSet in
@@ -166,6 +174,6 @@ uv run pytest
 ```
 
 The tests feed synthesized strummed chords through the detector and check the
-melody stays in key, in range and monophonic, and that a loud melody note on top
-of a chord does not change the detected chord. They do not cover a real guitar
-signal.
+melody stays in key, in range and monophonic, that a loud melody note on top
+of a chord does not change the detected chord, and that a repeating progression
+is predicted. They do not cover a real guitar signal.

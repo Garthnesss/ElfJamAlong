@@ -14,16 +14,19 @@ from .engine import PlayedNote
 TICKS = 480
 
 
-def write_midi(notes: list[PlayedNote], bars: int, bpm: float, path: Path) -> None:
+def midi_file(notes: list[PlayedNote], bars: int, bpm: float, order: list[str] | None = None) -> mido.MidiFile:
+    """A type-1 file: a tempo track, then one track per voice (in `order`, else by name)."""
     mid = mido.MidiFile(ticks_per_beat=TICKS)
     mid.tracks.append(mido.MidiTrack([mido.MetaMessage("set_tempo", tempo=mido.bpm2tempo(bpm), time=0)]))
-    for voice in sorted({n.voice for n in notes}):
+    for voice in order or sorted({n.voice for n in notes}):
         events = []
         for n in notes:
             if n.voice != voice:
                 continue
             on = round(n.start_beat * TICKS)
             off = min(round((n.start_beat + n.length_beats) * TICKS), bars * 4 * TICKS)
+            if off <= on:
+                continue
             events.append((on, 1, mido.Message("note_on", note=n.pitch, velocity=n.velocity)))
             events.append((off, 0, mido.Message("note_off", note=n.pitch)))
         track = mido.MidiTrack([mido.MetaMessage("track_name", name=f"ElfJamAlong {voice}", time=0)])
@@ -32,8 +35,12 @@ def write_midi(notes: list[PlayedNote], bars: int, bpm: float, path: Path) -> No
             track.append(msg.copy(time=tick - last))
             last = tick
         mid.tracks.append(track)
+    return mid
+
+
+def write_midi(notes: list[PlayedNote], bars: int, bpm: float, path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    mid.save(path)
+    midi_file(notes, bars, bpm).save(path)
 
 
 # ---------------------------------------------------------------- Ableton Live

@@ -57,9 +57,10 @@ class BassLine:
             pitch = _nearest(ctx.chord.root + 7, root, self.low, self.high)
         elif kind == "8":
             pitch = root + 12 if root + 12 <= self.high else root
-        else:  # a scale tone one step below or above the root, leading back to it
+        else:  # a scale tone one step below or above the coming bar's root, leading into it
             allowed = scale_for(ctx.chord, ctx.key)
-            near = [p for p in (root - 2, root - 1, root + 1, root + 2) if p % 12 in allowed and p >= self.low]
+            goal = root if ctx.next_chord is None else _nearest(ctx.next_chord.root, root, self.low, self.high)
+            near = [p for p in (goal - 2, goal - 1, goal + 1, goal + 2) if p % 12 in allowed and self.low <= p <= self.high]
             pitch = self.rng.choice(near) if near else root
         self._last = pitch
         velocity = max(1, min(127, (104 if pos == 0 else 90) + self.rng.randint(-5, 5)))
