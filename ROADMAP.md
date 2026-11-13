@@ -13,7 +13,7 @@ Driverless tap of Live's output, own-note handling, bass and arpeggio roles, cap
 The detector must be trusted before anything is built on it.
 
 - ✅ GuitarSet benchmark and a trained chord classifier (67% on unseen players, 80–83% on strummed styles).
-- ◐ **Link Audio input.** Receiver helper and `--source link` are built and pass against a test sender. Still to do in Live 12.4: check that one track can be sent on its own channel, and hear it. This would retire the tap for Live users.
+- ◐ **Link Audio input.** Done and heard working: **Live sends each track on its own Link Audio channel** (`Live/<track name>`, plus `Live/Main` and the returns; 2026-11-13, Live 12.4.16). `run --source link --link-channel <part of the name>` followed the virtual guitar loop at 92.5% once settled and stopped when the guitar stopped, with none of its own notes in the signal. `linktap` builds unchanged on macOS. Still to do: hear it with a real guitar through Live, and make `--source link` the default for Live users.
 - ☐ Play it with a real guitar through an interface. Record the session as a new test fixture.
 - ☐ Hear it with its own notes audible and Link on. Close out every BUILT NOT TESTED item in STATUS.md.
 - ✅ Steadier, quicker decisions: a belief filter replaced "four frames in a row" (+2.6 points on unseen players, 2026-11-12).

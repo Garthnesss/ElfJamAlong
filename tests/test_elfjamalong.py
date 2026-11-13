@@ -210,6 +210,152 @@ def test_recorded_virtual_guitar_loop_has_no_wrong_chords():
     assert det.key is not None and det.key.pitch_classes == Key.parse("A minor").pitch_classes
 
 
+# ------------------------------------------------- own notes from a capture MIDI
+
+from pathlib import Path
+
+_FIXTURES = Path(__file__).parent / "fixtures"
+_EXISTING_STEM = "virtual-guitar-am-dm-g-c-f-dm-e-am"
+_EXPECTED_TRIO_STEM = "trio-own-notes-am-dm-g-c-f-dm-e-am"
+# Any real trio fixture already recorded is picked up automatically; the expected
+# one is always listed so that, while it is absent, it skips with a clear reason.
+_TRIO_STEMS = sorted(q.stem for q in _FIXTURES.glob("trio-own-notes-*.wav"))
+_FIXTURE_STEMS = [_EXISTING_STEM] + (_TRIO_STEMS if _EXPECTED_TRIO_STEM in _TRIO_STEMS
+                                      else [_EXPECTED_TRIO_STEM] + _TRIO_STEMS)
+
+
+def _own_note_events(midi_path):
+    """(time_s, is_on, pitch, cancel) for every ElfJamAlong voice in a capture/render MIDI.
+
+    Only tracks named ``ElfJamAlong <voice>`` count: a render file also carries a
+    ``Chords`` track (the progression itself), which is the player, not us.
+    Mirrors ``cli._TellDetector``: the lead is told to the detector with
+    ``cancel=True`` (its pitch is hidden when scoring chords), bass and arp with
+    ``cancel=False`` (registered, so they do not count as the player playing, but
+    their chord tones are not hidden -- see ChordDetector.own_note_on).
+    Returns (events, bar_seconds); tempo is the file's single set_tempo (120 BPM
+    if it has none), as written by capture.midi_file and by ``render``.
+    """
+    import mido
+
+    mid = mido.MidiFile(midi_path)
+    tempo = 500000  # mido default, 120 BPM
+    for track in mid.tracks:
+        found = [m.tempo for m in track if m.type == "set_tempo"]
+        if found:
+            tempo = found[0]
+            break
+    sec_per_tick = tempo / 1_000_000 / mid.ticks_per_beat
+    events = []
+    for track in mid.tracks:
+        name, tick, pending = "", 0, []
+        for msg in track:
+            tick += msg.time
+            if msg.type == "track_name":
+                name = msg.name
+            elif msg.type in ("note_on", "note_off"):
+                pending.append((tick, msg))
+        if not name.startswith("ElfJamAlong"):
+            continue
+        cancel = "lead" in name.lower()
+        for tick, msg in pending:
+            is_on = msg.type == "note_on" and msg.velocity > 0
+            events.append((tick * sec_per_tick, is_on, msg.note, cancel))
+    events.sort(key=lambda e: (e[0], e[1]))  # note-offs before note-ons at the same instant
+    return events, 4 * tempo / 1_000_000  # seconds per bar (4 beats)
+
+
+def _load_wav_mono(path):
+    """Mono float audio from a WAV of 8/16/32-bit PCM, any channel count (downmixed)."""
+    import wave
+
+    w = wave.open(str(path))
+    sr, channels, width = w.getframerate(), w.getnchannels(), w.getsampwidth()
+    raw = w.readframes(w.getnframes())
+    if width == 2:
+        x = np.frombuffer(raw, dtype="<i2").astype(np.float32) / 32768
+    elif width == 4:
+        x = np.frombuffer(raw, dtype="<i4").astype(np.float32) / 2147483648
+    elif width == 1:
+        x = (np.frombuffer(raw, dtype=np.uint8).astype(np.float32) - 128) / 128
+    else:
+        raise ValueError(f"unsupported WAV sample width: {width} bytes")
+    return sr, x.reshape(-1, channels).mean(axis=1) if channels > 1 else x
+
+
+def _detect_with_own_notes(wav_path, midi_path, truth):
+    """Feed a recording to the detector, telling it (from the capture MIDI, in time
+    with the audio) which notes were ElfJamAlong's own. Same discipline as
+    test_recorded_virtual_guitar_loop_has_no_wrong_chords: only the true chord (or
+    the previous one, while the change is being confirmed) may ever be reported.
+    Returns (detector, latencies, full_bars): the per-bar reaction times and how
+    many whole bars the recording holds."""
+    sr, x = _load_wav_mono(wav_path)
+    events, bar_s = _own_note_events(midi_path)
+    now = [0.0]
+    det = ChordDetector(sr, clock=lambda: now[0])
+    latencies, bar_seen, nxt = [], -1, 0
+    for i in range(0, len(x), 256):
+        while nxt < len(events) and events[nxt][0] <= now[0]:
+            _, is_on, pitch, cancel = events[nxt]
+            if is_on:
+                det.own_note_on(pitch, cancel=cancel)
+            else:
+                det.own_note_off(pitch)
+            nxt += 1
+        det.feed(x[i : i + 256])
+        now[0] += 256 / sr
+        t = now[0] - 0.05
+        if t < 0 or det.chord is None:
+            continue
+        bar, into = divmod(t, bar_s)
+        bar = int(bar)
+        assert str(det.chord) in (truth[bar % len(truth)], truth[(bar - 1) % len(truth)]), (t, str(det.chord))
+        if str(det.chord) == truth[bar % len(truth)] and bar != bar_seen:
+            bar_seen = bar
+            latencies.append(into)
+    return det, latencies, int(len(x) / sr // bar_s)
+
+
+@pytest.mark.parametrize("stem", _FIXTURE_STEMS)
+def test_recorded_loop_with_own_notes_has_no_wrong_chords(stem, tmp_path):
+    """Task 7, code half: a recorded loop plus the capture MIDI of what ElfJamAlong
+    itself played over it, with the detector told which notes were its own.
+
+    The existing virtual-guitar WAV runs today against a SYNTHESIZED capture (a trio
+    rendered over the same progression, length and tempo). A real fixture
+    tests/fixtures/trio-own-notes-<progression>.wav + .mid is picked up as soon as
+    it exists; until then that parameter skips. To swap the real recording in, the
+    lead only has to drop the two files in tests/fixtures/ -- no code change.
+
+    One assertion differs for the stand-in, deliberately: the reaction bound is
+    1.0 s there, not 0.7 s. In the stand-in the trio's notes are not actually in
+    the audio, so registering them makes the detector discard every frame whose
+    spectrum lies mostly under the trio's harmonic masks (measured: 321 of 758
+    frames, seed 1; worst bar reaction 0.84 s, no wrong chords). The real fixture,
+    where the notes really are in the signal, keeps the faithful 0.7 s bound."""
+    from elfjamalong.cli import main
+
+    wav = _FIXTURES / f"{stem}.wav"
+    if stem == _EXISTING_STEM:
+        truth = ["Am", "Dm", "G", "C", "F", "Dm", "E", "Am"]
+        midi = tmp_path / "synthesized-trio-capture.mid"
+        max_latency = 1.0  # stand-in only; see docstring
+        assert main(["render", "--chords", " ".join(truth), "--preset", "trio",
+                     "--bars", "16", "--seed", "1", "-o", str(midi)]) == 0
+    else:
+        midi = _FIXTURES / f"{stem}.mid"
+        max_latency = 0.7  # the existing test's bound, unchanged for the real recording
+        if not wav.exists() or not midi.exists():
+            pytest.skip(f"real trio fixture not recorded yet: need {wav.name} and {midi.name} "
+                        "in tests/fixtures (docs/MUSE_HANDOFF.md task 7)")
+        truth = [tok.capitalize() for tok in stem[len("trio-own-notes-"):].split("-")]
+    det, latencies, full_bars = _detect_with_own_notes(wav, midi, truth)
+    assert len(latencies) >= full_bars and max(latencies) < max_latency
+    if truth == ["Am", "Dm", "G", "C", "F", "Dm", "E", "Am"]:
+        assert det.key is not None and det.key.pitch_classes == Key.parse("A minor").pitch_classes
+
+
 def _play_voices(chords, key, bars, roles):
     from elfjamalong.engine import Voice
     from elfjamalong.roles import Arpeggio, BassLine

@@ -19,7 +19,12 @@ Heard or measured, not just built.
 | Reaction on the recorded Live loop | Mean 0.27 s, worst 0.33 s, no wrong chords (before 2026-11-12: 0.29 s, worst 0.51 s) |
 | Link Audio reception | `linktap` received its own test sender's 440 Hz channel on one machine (Linux): found by name, right sample rate, two seconds with no gaps. Not yet against Live |
 | Learned lead predicts unseen players | Loss per sixteenth 1.08 on players 04–05 against 1.41 for bar position alone (trained on 00–03). Says nothing about how it sounds |
-| Unit tests | 62 passing |
+| Unit tests | 63 passing, 1 skipped (the real own-notes fixture, not recorded yet) |
+| Follows the guitar loop with the trio audible through the tap (2026-11-13, Mac, Live 12, virtual guitar Am Dm G C F Dm E Am at 117 BPM, 40 s, `tools/live_check/measure.py`) | Right 89.9% of the time over the run, **92.4% once 0.6 s past each change**; wrong chords were 0.05–0.1 s blips (Dm for Am, G for Dm) after a 1.6 s warm-up. Raw data in `docs/handoff-2026-11-13/runs/` |
+| Link Audio from Live: **Live sends every track on its own channel** | `elfjamalong devices` lists `Live/Guitar stand-in`, `Live/ElfJamAlong`, `Live/Main`, one per track and return. `run --source link --link-channel Guitar`: 90.9% right overall, **92.5% settled**, and the chord went to "-" 6.9 s after the clip stopped. Link Audio was already On in Live's Settings (name "Live", latency 100 ms) |
+| `tools/linktap/build.sh` on macOS | Builds unchanged with Apple clang 21 (pass `LINK_SDK=<a clone of the Link SDK>` to skip the git clone). `uv run pytest -q` with `linktap --send-tone` running: 63 passed, 1 skipped, so the `link_audio` test passes. Built by a Muse subagent and re-run by the lead |
+| Note starts sit on Live's sixteenth-note grid | Note-on times against Live's song clock: median 11–14 ms after the grid, standard deviation 5 ms, worst 33 ms, over 400–850 notes per run. The song clock was polled twice a second, so this is good to about ±30 ms. Not checked by recording the track inside Live |
+| `calibrate` against Live | Three runs, median delay 53, 57 and 55 ms (7–8 of 8 notes heard). Steady. The suggested `--offset-ms 55` was not tried. The spread within a run is 10–394 ms because the test instrument (S&H Pluck Slow Lead) has a slow attack, so it reads as an upper limit |
 
 ### Chord accuracy (GuitarSet players 04–05, model trained on 00–03)
 
@@ -76,22 +81,25 @@ Where the errors are (baseline, per frame): 67% right; 4% right root with the wr
 
 ## BUILT NOT TESTED
 - **Everything changed on 2026-11-12 and 11-13 has only been run on recordings and in tests, on Linux, without Live:** the belief filter and retrained model, `--predict`, cutting held notes on a chord change, `render --roles`, and everything in the next six items.
-- **`--source link` (Link Audio).** Works against its own test sender. Not tried against Live, and whether Live can send one track on its own channel is still unknown. `tools/linktap/build.sh` has only been run on Linux; the macOS branch of the script is untested.
 - **`--lead model` (learned lead).** Keeps the contract (in key, in range, monophonic) in tests. Nobody has listened to it. On paper it plays about as many notes as the solos it learned from, lands on chord tones on the beat 55% of the time (the solos: 51%; the rules: 93%), and sits in the lower half of the range.
 - **`--feel follow` (now the default) and `--feel answer`.** Tested on synthetic contexts and synthesized strums. With the tap, the level it follows includes whatever else Live is playing.
-- **`elfjamalong calibrate`.** The measuring is tested on made-up levels; the command has never sent a note to a real instrument.
+- **`calibrate --offset-ms`.** The command measures steadily (see Verified); applying the suggested offset has not been heard.
 - **`--source midi`.** Chord spelling is tested; no MIDI port has been opened.
 - **Seventh chords** in a real jam (measured on GuitarSet only).
-- **`--predict` (loop prediction).** Passes on synthesized strums end to end. Never tried on a real player, whose changes are less regular. Off by default.
-- **Own-note handling with the notes audible.** In every live run the receiving track was un-armed, so nothing ElfJamAlong played was in the signal. Covered only by a simulation with synthesized notes.
+- **`--predict` on a real player.** Tried on the virtual guitar and it did not work (see Known problems). Still off by default.
+- **Own-note handling with the notes audible: detection works, stopping does not.** See Verified and Known problems. A recorded fixture for it is still to do: the test is in `tests/test_elfjamalong.py` and skips until `tests/fixtures/trio-own-notes-*.wav` + `.mid` exist.
 - **Arpeggio role** in Live, and `--split-channels`.
 - **`ElfJamAlong.command`** by double-click, and capture by pressing Enter (capture was triggered with `elfjamalong capture`).
 - **Audio interface input** with a real guitar. The device path has only opened the MacBook microphone.
-- **Link sync.** Link was off in Live for every run, so the bar alignment has never been heard.
+- **Link sync.** Link was on in Live for these runs (peers 1) and the notes sit on its grid by the song clock, but nobody has listened to the bar alignment.
 - **Logic Pro.** Not tried at all.
-- **After the rename (2026-11-10):** tests pass, but nothing has been run against Live under the new port name `ElfJamAlong`. The Live track must also be named `ElfJamAlong` for captures to land in it.
+- **`--feel follow` / `--feel answer` in Live, `--lead model`, the blind test, the capture to a Live clip and `ElfJamAlong.command` by double-click** were not run in the 2026-11-13 hand-off. The blind-test files are ready in `blindtest/`.
 
 ## Known problems
+- **Through the tap, the voices do not stop when the guitar does.** Trio, tap, ElfJamAlong track audible: after the guitar clip was stopped the engine went on playing at the same rate for the whole 14.9 s watched (119 note-ons), against `--tail 4`. It hears its own bass and arp. Through a Link Audio channel of the guitar track alone, it stopped (chord "-" 6.9 s after the stop; the MIDI of that run was not captured, so the note-offs are unconfirmed). Use `--source link` for now.
+- **`--predict` did not work on the virtual guitar loop.** 100 s (about six rounds): the first bass note of the bar was the previous chord's root in 42 of 48 bars (the six others are the Am to Am repeat); the status line ended on "loop 1 bars" once the guitar stopped. The 8-bar loop lock the hand-off expects ("loop 8 bars") was not seen at the end, and the run did not log when it came or went. Left off.
+- **A track armed with MIDI From "All Ins" plays ElfJamAlong's own notes** (it listens to the ElfJamAlong port). With the guitar stand-in armed like that the detector heard itself: 38–64% right and the voices never stopped. Disarmed it, and the 92% above followed. Keep only the ElfJamAlong track armed, or set the guitar track's MIDI From to No Input.
+- **Muse's code review** (`docs/handoff-2026-11-13/muse-code-review.md`, 15 findings, 7 confirmed by the reviewer running something and 7 from reading, 1 more partly): no guard against a second `run` on the same port and pid file; no MIDI channel range check; MIDI input chords do not update on note-off and ignore the sustain pedal; `calibrate` can read a previous note's tail as the attack; captured notes keep their full length when cut short; own-note masking has no count per pitch; the Link helper can hang on a silent channel. Nothing fixed yet. The lead re-ran none of them.
 - **Minor chords** are the weak spot on real guitar: heard as the major on the same root (Fm as F) or as the relative major (F♯m as A).
 - **Sevenths are mostly missed** (one in four shown), by choice of a cautious threshold.
 - **The learned lead tends to repeat notes** when left to itself (40% of moves against 18% in the solos); a fixed damping factor corrects it. A sign the model is small for the job.
@@ -110,6 +118,7 @@ Where the errors are (baseline, per frame): 67% right; 4% right root with the wr
 4. **Licence for the public GitHub repo.** None chosen yet.
 
 ## History
+- **2026-11-13** — Hand-off run on the Mac with Live (docs/MUSE_HANDOFF.md). Built the virtual guitar track in the open Live set. Measured with `tools/live_check/`: tap and Link Audio follow the loop at about 92% once settled; Live sends one Link Audio channel per track; linktap builds on macOS; calibrate steady at 55 ms; notes on the grid. Found: voices keep playing through the tap after the guitar stops; `--predict` ineffective; armed track with All Ins feeds back. Muse (muse.ai desktop app) ran four subagents in parallel (build, blind-test rendering, own-notes test, code review); the lead re-ran the build and the tests. Not done: feel, learned-lead listening, the 16-bar own-notes recording, double-click launcher.
 - **2026-11-09** — Research; first prototype (chord templates, rule-based lead, Link, virtual MIDI port). Demo heard in Live. Driverless Live tap. Own-note cancellation. Virtual guitar track.
 - **2026-11-09** — Bass and arpeggio roles, capture to file and Live clip, saved settings, launcher. Cancellation reworked after it hurt detection with the bass on.
 - **2026-11-11** — Research pass on May–November 2026 (docs/RESEARCH_2026-11.md): Link Audio in Live 12.4 may replace the tap; roadmap updated; session prompt written (docs/SESSION_PROMPT.md).

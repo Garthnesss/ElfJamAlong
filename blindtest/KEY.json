@@ -1,0 +1,122 @@
+{
+  "1": {
+    "A": "rules",
+    "B": "model",
+    "progression": "C G Am F",
+    "key": "C major",
+    "seed": 101,
+    "bpm": 72,
+    "density": 0.25,
+    "feel": "slow ballad, sparse",
+    "flip_seed": 20261112,
+    "chord_track": "chordbass_1.mid"
+  },
+  "2": {
+    "A": "model",
+    "B": "rules",
+    "progression": "Am F Dm E",
+    "key": "A minor",
+    "seed": 102,
+    "bpm": 76,
+    "density": 0.3,
+    "feel": "slow melancholic",
+    "flip_seed": 20261112,
+    "chord_track": "chordbass_2.mid"
+  },
+  "3": {
+    "A": "rules",
+    "B": "model",
+    "progression": "G D Em C G D C D",
+    "key": "G major",
+    "seed": 103,
+    "bpm": 132,
+    "density": 0.65,
+    "feel": "busy upbeat folk",
+    "flip_seed": 20261112,
+    "chord_track": "chordbass_3.mid"
+  },
+  "4": {
+    "A": "model",
+    "B": "rules",
+    "progression": "Em C G D Em G C D",
+    "key": "E minor",
+    "seed": 104,
+    "bpm": 140,
+    "density": 0.7,
+    "feel": "busy rock",
+    "flip_seed": 20261112,
+    "chord_track": "chordbass_4.mid"
+  },
+  "5": {
+    "A": "rules",
+    "B": "model",
+    "progression": "D A Bm G D A",
+    "key": "D major",
+    "seed": 105,
+    "bpm": 112,
+    "density": 0.5,
+    "feel": "midtempo pop",
+    "flip_seed": 20261112,
+    "chord_track": "chordbass_5.mid"
+  },
+  "6": {
+    "A": "model",
+    "B": "rules",
+    "progression": "F Bb Gm C7 Bb C7",
+    "key": "F major",
+    "seed": 106,
+    "bpm": 84,
+    "density": 0.35,
+    "feel": "slow soul groove, dominant 7ths",
+    "flip_seed": 20261112,
+    "chord_track": "chordbass_6.mid"
+  },
+  "7": {
+    "A": "rules",
+    "B": "model",
+    "progression": "Dm Bb F C Gm A7",
+    "key": "D minor",
+    "seed": 107,
+    "bpm": 124,
+    "density": 0.68,
+    "feel": "busy funk",
+    "flip_seed": 20261112,
+    "chord_track": "chordbass_7.mid"
+  },
+  "8": {
+    "A": "model",
+    "B": "rules",
+    "progression": "E A B7 C#m A E B7 E",
+    "key": "E major",
+    "seed": 108,
+    "bpm": 138,
+    "density": 0.72,
+    "feel": "busy country-rock",
+    "flip_seed": 20261112,
+    "chord_track": "chordbass_8.mid"
+  },
+  "9": {
+    "A": "rules",
+    "B": "model",
+    "progression": "Bb Eb F Gm",
+    "key": "Bb major",
+    "seed": 109,
+    "bpm": 68,
+    "density": 0.22,
+    "feel": "slow jazz-ish ballad, sparse",
+    "flip_seed": 20261112,
+    "chord_track": "chordbass_9.mid"
+  },
+  "10": {
+    "A": "rules",
+    "B": "model",
+    "progression": "F#m D A E F#m D C#m E",
+    "key": "F# minor",
+    "seed": 110,
+    "bpm": 118,
+    "density": 0.6,
+    "feel": "mid-busy alternative",
+    "flip_seed": 20261112,
+    "chord_track": "chordbass_10.mid"
+  }
+}
