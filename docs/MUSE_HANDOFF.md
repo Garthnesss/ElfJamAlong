@@ -10,6 +10,23 @@ Repo: `~/Projects/ElfJamAlong` (GitHub `Garthnesss/ElfJamAlong`). Branch: **`cla
 3. Read `STATUS.md`, section "BUILT NOT TESTED". That list is your work. `PROJECT_TRUTH.md` has the rules; rule 8 matters most here: nothing is verified until it has been run, and you write down exactly what happened, including failures.
 4. Live set: a track named `ElfJamAlong` (MIDI From: the `ElfJamAlong` port, Monitor **In**, any instrument with a sharp attack), and a guitar stand-in: a MIDI clip of strummed chords on Live's "Guitar Acoustic", looping. The fixture `tests/fixtures/virtual-guitar-am-dm-g-c-f-dm-e-am.wav` was recorded from such a loop (Am Dm G C F Dm E Am, one bar each, 120 BPM). The AbletonMCP bridge on localhost:9877 can create clips and add notes; it cannot arm tracks or change routing. Where a step needs a click you cannot make, ask Garth for that one click and carry on with the next task.
 
+## Running this with subagents
+
+One lead agent owns the branch, `STATUS.md` and Live. Subagents do the pieces below and report back; they do not push, and they do not touch Live unless they are the one agent holding it.
+
+**Only one agent may drive Live at a time.** There is one Live set, one `ElfJamAlong` MIDI port and one pid file, so two `elfjamalong run` processes or two agents editing clips will corrupt each other's results. Tasks 1, 2 (the Live half), 3, 4, 5 and 7 are a single queue, in that order, run by the lead or by one subagent at a time.
+
+These need no Live and can run in parallel from the start, each in its own git worktree of the branch:
+
+| Subagent | Does | Hands back |
+|---|---|---|
+| **Build** | Task 2, first half: get `tools/linktap/build.sh` working on macOS, pass the `link_audio` test against `--send-tone` | a patch to the build script, the test output |
+| **Blind test** | Task 6, the rendering half: ten progressions, twenty MIDI files, the shuffled A/B key | the files and the key; the lead puts them into Live later |
+| **Fixture test** | Task 7, the code half: write the test that loads a WAV plus its capture MIDI and checks the chords, using the existing fixture until the new recording exists | a patch; the lead swaps in the real recording |
+| **Reviewer** | Read the diff of the last two commits on the branch (`git diff ac57a92..HEAD -- src tools`) for bugs, with fresh eyes. The code was written without ever running against Live or CoreMIDI | a list of findings with file and line, most serious first; no edits |
+
+The lead merges patches in the order they arrive, runs `uv run pytest -q` after each, and only then starts the Live queue. Every subagent's report must separate what it ran and saw from what it expects.
+
 ## Tasks, in order
 
 ### 1. The basics that have never been heard
