@@ -63,7 +63,7 @@ class BassLine:
             near = [p for p in (goal - 2, goal - 1, goal + 1, goal + 2) if p % 12 in allowed and self.low <= p <= self.high]
             pitch = self.rng.choice(near) if near else root
         self._last = pitch
-        velocity = max(1, min(127, (104 if pos == 0 else 90) + self.rng.randint(-5, 5)))
+        velocity = max(1, min(127, (104 if pos == 0 else 90) + round((ctx.energy - 0.5) * 24) + self.rng.randint(-5, 5)))
         return NoteEvent(pitch, velocity, length * 0.85)
 
 
@@ -103,5 +103,5 @@ class Arpeggio:
         tones = self._tones(ctx.chord)
         index = _ARP_SHAPES[self._shape][pos // 2]
         pitch = tones[min(index, len(tones) - 1)]
-        velocity = max(1, min(127, (78 if pos % 8 == 0 else 64) + self.rng.randint(-4, 4)))
+        velocity = max(1, min(127, (78 if pos % 8 == 0 else 64) + round((ctx.energy - 0.5) * 24) + self.rng.randint(-4, 4)))
         return NoteEvent(pitch, velocity, 1.8)

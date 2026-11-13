@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
 _FLAT_TO_SHARP = {"DB": "C#", "EB": "D#", "GB": "F#", "AB": "G#", "BB": "A#"}
@@ -28,13 +28,16 @@ def parse_note(name: str) -> int:
 class Chord:
     root: int  # pitch class 0-11
     quality: str  # "maj" | "min"
+    # A dominant seventh (G7). It colours the scale but is still "the G chord": two
+    # chords that differ only in this are equal, so nothing that follows chords flickers.
+    seventh: bool = field(default=False, compare=False)
 
     @property
     def pitch_classes(self) -> frozenset[int]:
         return frozenset((self.root + i) % 12 for i in TRIADS[self.quality])
 
     def __str__(self) -> str:
-        return NOTE_NAMES[self.root] + ("m" if self.quality == "min" else "")
+        return NOTE_NAMES[self.root] + ("m" if self.quality == "min" else "") + ("7" if self.seventh else "")
 
     @classmethod
     def parse(cls, text: str) -> "Chord":
@@ -45,7 +48,7 @@ class Chord:
         if rest.startswith(("dim", "aug", "+", "o")):
             raise ValueError(f"only major and minor chords are supported: {text!r}")
         minor = rest.startswith(("m", "-")) and not rest.startswith("maj")
-        return cls(root, "min" if minor else "maj")
+        return cls(root, "min" if minor else "maj", seventh=rest in ("7", "9", "13"))
 
 
 @dataclass(frozen=True)
@@ -76,16 +79,20 @@ def scale_for(chord: Chord, key: Key | None) -> frozenset[int]:
     """Pitch classes the melody may use right now.
 
     With a known key: the key's scale, bent so every chord tone is in it (a
-    borrowed E major in A minor swaps G for G#). Without one: the chord's own
+    borrowed E major in A minor swaps G for G#; a dominant seventh adds its flat
+    seventh). Without one: the chord's own
     pentatonic, which is safe over that chord whatever the key turns out to be.
     """
     if key is None:
         penta = MAJOR_PENTATONIC if chord.quality == "maj" else MINOR_PENTATONIC
         return frozenset((chord.root + i) % 12 for i in penta)
     pcs = set(key.pitch_classes)
-    for tone in chord.pitch_classes:
+    tones = set(chord.pitch_classes)
+    if chord.seventh:  # a dominant seventh brings its flat seventh (A7 in A major: G, not G#)
+        tones.add((chord.root + 10) % 12)
+    for tone in sorted(tones):
         if tone not in pcs:
             pcs.discard((tone - 1) % 12)
             pcs.discard((tone + 1) % 12)
             pcs.add(tone)
-    return frozenset(pcs | chord.pitch_classes)
+    return frozenset(pcs | tones)

@@ -76,12 +76,14 @@ def main() -> int:
     ap.add_argument("--confusions", type=int, default=12)
     ap.add_argument("--players", default="", help="only these player numbers, e.g. 4,5")
     ap.add_argument("--model", type=Path, help="use this model file instead of the shipped one")
+    ap.add_argument("--audio", choices=["mic", "pickup"], default="mic", help="which recording of each take")
     ap.add_argument("--progressions", default="", help="only these progression numbers (1-3), e.g. 3")
     args = ap.parse_args()
     settings = {k: json.loads(v) for k, v in (s.split("=", 1) for s in args.set)}
 
     notes = zipfile.ZipFile(args.folder / "annotation.zip")
-    audio_zip = zipfile.ZipFile(args.folder / "audio_mono-mic.zip")
+    zip_name, suffix = {"mic": ("audio_mono-mic.zip", "_mic.wav"), "pickup": ("audio_mono-pickup_mix.zip", "_mix.wav")}[args.audio]
+    audio_zip = zipfile.ZipFile(args.folder / zip_name)
     wavs = {Path(n).name: n for n in audio_zip.namelist() if n.endswith(".wav")}
     jams = sorted(n for n in notes.namelist() if n.endswith("_comp.jams"))
     if args.players:
@@ -100,7 +102,7 @@ def main() -> int:
     reaction: list[float] = []
     for name in jams:
         stem = Path(name).stem
-        wav_name = wavs.get(stem + "_mic.wav")
+        wav_name = wavs.get(stem + suffix)
         if wav_name is None:
             continue
         sheet = lead_sheet(json.loads(notes.read(name)))
@@ -127,6 +129,10 @@ def main() -> int:
                     counter["settled"] += got == want
             if got != want and t - seg[0] >= 0.5:
                 confusion[(str(want), str(got))] += 1
+            if got == want and want.quality == "maj":  # right major chord: is the seventh flag right too?
+                is_seventh = seg[2].split(":")[-1].split("/")[0] == "7"
+                totals["seventh_frames" if is_seventh else "plain_frames"] += 1
+                totals["seventh_said" if is_seventh else "plain_said"] += got.seventh
         # How long after each chord change the right chord first appears, and how often the answer changes.
         totals["flips"] += sum(a != b for a, b in zip(heard, heard[1:]))
         for start, end, label in sheet[1:]:
@@ -150,6 +156,9 @@ def main() -> int:
               f"{totals['flips'] / max(1, totals['changes']):.2f} reported changes per real change")
     for style in sorted(by_style):
         print(line(style, by_style[style]))
+    if totals["seventh_frames"]:
+        print(f"dominant sevenths shown as such {100 * totals['seventh_said'] / totals['seventh_frames']:.0f}% of the time; "
+              f"plain major chords wrongly shown as sevenths {100 * totals['plain_said'] / max(1, totals['plain_frames']):.0f}%")
     if args.confusions:
         print("most common settled mistakes (wanted -> heard):")
         for (want, got), n in confusion.most_common(args.confusions):

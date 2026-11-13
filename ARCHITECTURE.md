@@ -24,29 +24,36 @@ One Python package, `src/elfjamalong/`. Dependencies point one way: `cli` → `e
 | `roles.py` | `BassLine`, `Arpeggio` |
 | `engine.py` | `Engine`, `Voice`: clock ticks → notes; keeps the note history |
 | `loop.py` | `ProgressionTracker`: notices a repeating progression and says which chord comes next |
+| `learned.py` | `LearnedMelody`: the lead played by a network trained on guitar solos |
+| `midi_in.py` | `MidiChords`: chords read from held MIDI notes, in place of the audio detector |
+| `calibrate.py` | measures the delay from a note sent to its sound, for `--offset-ms` |
 | `clock.py` | `LinkClock` (Ableton Link), `InternalClock` |
 | `midi_out.py` | virtual MIDI port, one sink per channel |
 | `capture.py` | history → MIDI file; optional clip in Live through the AbletonMCP remote script |
 | `cli.py` | commands, audio sources, saved settings (`elfjamalong.toml`) |
 | `tools/livetap/` | Swift: Core Audio process tap of one app → mono float32 PCM on stdout |
+| `tools/linktap/` | C++: one Link Audio channel → mono float32 PCM on stdout (same contract as `livetap`; GPL, built on the Link SDK) |
 | `tools/train_chords.py`, `tools/bench_guitarset.py` | train and measure the chord model on GuitarSet |
+| `tools/train_melody.py` | train the learned lead on GuitarSet's solo excerpts |
 
 ## Listening
 
 ### Audio sources
 - **Device** (`--source device`): any input through `sounddevice`. The clean case: a guitar on its own channel.
+- **Link Audio** (`--source link`): `linktap` joins the Link session as a peer named ElfJamAlong, finds a channel by name, and streams it as mono PCM. Buffers arrive as 16-bit samples with their own sample rate; the helper reports the rate of the first one.
+- **MIDI** (`--source midi`): no audio. `MidiChords` reads the chord from the notes held (root and third required; the lowest note breaks ties, so C-E-G-A is C over a C bass and Am over an A bass).
 - **Live tap** (`--source live`): `livetap` creates a private Core Audio process tap on one app (default `com.ableton.live`) and an aggregate device to read it, then streams mono PCM to the Python process over a pipe. No loopback driver, no microphone. It hears the whole app output, including ElfJamAlong's own notes.
 
 ### Features
 Window 8192 samples (≈170 ms at 48 kHz), hop 2048 (≈43 ms). Magnitude spectrum, log-compressed, 75–2000 Hz. Each bin votes for nearby pitch classes with a Gaussian (σ 0.35 semitone). Votes are kept per register — 75–220, 220–660, 660–2000 Hz — because the low register mostly carries the root. The 36 values are L2-normalised and smoothed with a 0.07 s time constant (`SMOOTH_S`; the classifier is trained with the same value).
 
 ### Chord classifier
-`ChordModel` is a two-layer network (36 → 32 → 2) that answers "major or minor chord on C?". It is applied to all 12 transpositions of the features, so every root shares the same weights; the 24 outputs go through a softmax. About 1,200 parameters, stored in `chord_model.npz`, evaluated in numpy.
+`ChordModel` is a two-layer network (36 → 32 → 2) that answers "major or minor chord on C?". It is applied to all 12 transpositions of the features, so every root shares the same weights; the 24 outputs go through a softmax. The file holds five such networks trained from different starting points; their log-probabilities are averaged. A second, smaller network (36 → 16 → 1) answers "is this major chord a dominant seventh?"; it only sets `Chord.seventh`, which does not take part in chord equality, so it cannot change which chord is reported. About 6,700 parameters in all, stored in `chord_model.npz`, evaluated in numpy.
 
-Training (`tools/train_chords.py`): GuitarSet comping excerpts, lead-sheet chords reduced to root + major/minor, random transposition every batch so all keys are equally common, and a copy of every frame with a pretend lead note hidden (see below). A template matcher (harmonic-weighted triads, correlation) remains as `classifier="templates"` and as the "is this pitched at all?" gate that keeps noise and drums from being called chords.
+Training (`tools/train_chords.py`): GuitarSet comping excerpts, from the microphone and the pickup recordings of each take, lead-sheet chords reduced to root + major/minor, random transposition every batch so all keys are equally common, and a copy of every frame with a pretend lead note hidden (see below). A template matcher (harmonic-weighted triads, correlation) remains as `classifier="templates"` and as the "is this pitched at all?" gate that keeps noise and drums from being called chords.
 
 ### Decision logic
-- The detector carries a **belief** over the 24 chords from frame to frame. Each frame the belief leaks slightly toward the other chords (`stay` 0.9), then is multiplied by the classifier's probabilities raised to `evidence_power` (0.35), so one odd frame cannot overturn it. The reported chord changes when another chord's belief leads the current one by `switch_margin` (0.3).
+- The detector carries a **belief** over the 24 chords from frame to frame. Each frame the belief leaks slightly toward the other chords (`stay` 0.9; four times more of the leak goes to chords of the key, once the key is known), then is multiplied by the classifier's probabilities raised to `evidence_power` (0.35), so one odd frame cannot overturn it. The reported chord changes when another chord's belief leads the current one by `switch_margin` (0.3).
 - The first chord waits 5 frames, because the window is still filling. During silence the belief relaxes toward "no idea", so the next chord played is picked up quickly.
 - Frames that do not look pitched (template gate) or where the classifier is unsure (below 0.3) do not count as hearing the player.
 - With `classifier="templates"` the older rule applies: the same winner 4 analyses in a row, with a bonus for the current chord.
@@ -54,6 +61,9 @@ Training (`tools/train_chords.py`): GuitarSet comping excerpts, lead-sheet chord
 
 ### Key
 Each stable frame adds the chord's triad to a pitch-class histogram with a 45 s half-life. Krumhansl–Schmuckler correlation against 24 key profiles picks the key once two different chords have been heard. Relative major/minor are often confused; they share a scale, which is all the generators need.
+
+### How the player is playing
+The detector also reports `energy` (the level over the last 0.4 s against the player's own 20 s average, mapped to 0–1 with 0.5 as "usual") and the time since the last strum onset (a block more than 1.6 times louder than the three before it). The engine passes both to the generators.
 
 ### Hearing its own notes
 The engine tells the detector every note-on and note-off.
@@ -70,12 +80,13 @@ The engine tells the detector every note-on and note-off.
 `ProgressionTracker` records the chord heard on every sixteenth. When the last round matches the one before it over a whole number of bars (1 to 8, at least 85% of sixteenths), it answers with what was heard at this point of the previous round, moved earlier by the detector's lag. The lag is worked out from where the changes were heard: chords change on the eighth-note grid, so of the delays that fit, the one nearest 0.3 s is taken. If what is heard does not fit the loop (within a sixteenth either way) the tracker answers with what is heard, at once; after about 0.35 s of that it forgets the loop. It also passes the next bar's chord to the generators (`Context.next_chord`); the bass uses it for its passing note.
 
 ### Generators
-One protocol: `step(Context(step, chord, key)) -> NoteEvent | None`, plus `reset()`.
-- **Lead** (`RuleBasedMelody`): per-bar onset pattern from beat-weighted probabilities, in four-bar phrases (motif, variation, motif with its contour, sparse ending). Pitch by weighted choice: chord tones on strong beats, stepwise scale motion, step back after a leap, pull toward the middle of the range.
+One protocol: `step(Context) -> NoteEvent | None`, plus `reset()`. The context holds the step, chord and key, and when known the next bar's chord, the player's energy and the sixteenths since their last strum.
+- **Lead** (`RuleBasedMelody`): per-bar onset pattern from beat-weighted probabilities, in four-bar phrases (motif, variation, motif with its contour, sparse ending). Pitch by weighted choice: chord tones on strong beats, stepwise scale motion, step back after a leap, pull toward the middle of the range. More notes and higher velocity when the player's energy is up. Before a known chord change, the bar's last note favours a scale step from a tone of the next chord. With `--feel answer` it drops most notes that would land on a strum and adds notes when the player has left three sixteenths or more of space.
+- **Learned lead** (`LearnedMelody`, `--lead model`): a network (271 → 96 → 26 + 8) trained on GuitarSet's solos. Each sixteenth it sees the bar position, its own last eight steps, and the harmony relative to the chord root and key, and gives the chance of starting a note at each interval from its previous note, plus a note length. Sampling is restricted to the allowed scale and range (a disallowed note's chance goes to its neighbour), repeated notes are damped to the rate found in the solos, and density and energy scale the chance that a note starts.
 - **Bass** (`BassLine`): root on beat one, fifth/octave patterns, a scale passing note into the next bar.
 - **Arpeggio** (`Arpeggio`): eighth notes through root–third–fifth–octave in one of three shapes.
 
-`scale_for` gives the allowed notes: the key's scale with any out-of-key chord tone swapped in for its neighbour (E major in A minor turns G into G♯). Before the key is known, the chord's own pentatonic.
+`scale_for` gives the allowed notes: the key's scale with any out-of-key chord tone swapped in for its neighbour (E major in A minor turns G into G♯; A7 in A major turns G♯ into G). Before the key is known, the chord's own pentatonic.
 
 ### Clock
 `LinkClock` joins the Ableton Link session with a 4-beat quantum, so step 0 of each 16 is the session's downbeat. `--offset-ms` plays early to cancel instrument latency. Measured jitter of note-ons against the grid: under 3 ms.
@@ -87,4 +98,4 @@ One virtual port, `ElfJamAlong`. All roles share a channel by default; `--split-
 `Engine.last_bars(n)` returns the notes of the last n complete bars, re-timed to start at beat 0, leading empty bars dropped. `capture()` writes a type-1 MIDI file (one track per role) and, if the AbletonMCP remote script answers on localhost:9877, creates a clip in the first empty slot of the track named `ElfJamAlong`. Triggered by Enter in the terminal or `elfjamalong capture` (SIGUSR1 to the running process).
 
 ## Tests
-`uv run pytest` — 48 tests: detection on synthesized strums and on a loop recorded from Live, own-note handling, generator invariants (in key, in range, monophonic, chord tones on downbeats), loop prediction (alone and end to end on audio), capture round-trip, render. GuitarSet accuracy is a benchmark, not a test, because it needs the 700 MB dataset.
+`uv run pytest` — 62 tests (one needs the `linktap` helper built and is skipped without it): detection on synthesized strums and on a loop recorded from Live, own-note handling, generator invariants (in key, in range, monophonic, chord tones on downbeats), loop prediction (alone and end to end on audio), dynamics and answer mode, the learned lead's contract, seventh chords, MIDI chord input, Link Audio reception, calibration, capture round-trip, render. GuitarSet accuracy is a benchmark, not a test, because it needs the 700 MB dataset.

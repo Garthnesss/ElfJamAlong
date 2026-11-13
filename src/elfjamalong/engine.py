@@ -55,12 +55,14 @@ class Engine:
         harmony: Callable[[], Harmony | None] | None = None,
         history_bars: int = 64,
         tracker=None,  # a loop.ProgressionTracker: predicts the chord of a repeating progression
+        feel: Callable[[], tuple[float, float | None]] | None = None,  # -> (energy 0-1, sixteenths since a strum)
     ):
         if harmony is None:  # Engine(voices, harmony)
             self.voices, self.harmony = voices, sink_or_harmony
         else:  # Engine(generator, sink, harmony): a single lead voice
             self.voices, self.harmony = [Voice("lead", voices, sink_or_harmony)], harmony
         self.tracker = tracker
+        self.feel = feel
         self._step: int | None = None
         self._idle = True
         self.history: deque[PlayedNote] = deque()
@@ -97,7 +99,8 @@ class Engine:
         next_chord = None
         if self.tracker is not None:
             chord, next_chord = self.tracker.update(step, chord)
-        ctx = Context(step, chord, key, next_chord)
+        energy, since_onset = self.feel() if self.feel is not None else (0.5, None)
+        ctx = Context(step, chord, key, next_chord, energy, since_onset)
         allowed = scale_for(chord, key)
         for v in self.voices:
             # A note held from the previous chord that the new harmony does not allow is cut.

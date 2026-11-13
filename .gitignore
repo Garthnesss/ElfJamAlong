@@ -9,6 +9,8 @@ wheels/
 # Virtual environments
 .venv
 tools/livetap/livetap
+tools/linktap/linktap
+tools/linktap/link/
 captures/
 data/
 *.asd

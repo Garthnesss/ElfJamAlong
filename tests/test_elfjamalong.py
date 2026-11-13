@@ -293,7 +293,8 @@ def test_own_bass_and_arp_alone_do_not_count_as_the_player():
 
 def test_chord_names_with_extensions_land_on_their_triad():
     assert [str(Chord.parse(c)) for c in ["G7", "Dm7", "Cmaj7", "Bb", "F#m", "Asus4", "Ebm"]] == \
-        ["G", "Dm", "C", "A#", "F#m", "A", "D#m"]
+        ["G7", "Dm", "C", "A#", "F#m", "A", "D#m"]
+    assert Chord.parse("G7") == Chord.parse("G")  # still the G chord to everything that follows chords
     with pytest.raises(ValueError):
         Chord.parse("Bdim")
 
@@ -455,3 +456,212 @@ def test_detector_plus_tracker_puts_bar_starts_on_the_new_chord():
     assert tracker.loop_steps == 64
     assert followed == 0  # plain following is always late here
     assert starts == 8 and predicted >= 7
+
+
+# ------------------------------------------------------------ changes of 2026-11-13
+
+
+def _lead_notes(bars=32, seed=0, **ctx_kw):
+    from elfjamalong.melody import Context
+
+    gen = RuleBasedMelody(seed=seed, **{k: ctx_kw.pop(k) for k in ("answer",) if k in ctx_kw})
+    chord, key = Chord.parse("C"), Key.parse("C major")
+    out = []
+    for step in range(bars * 16):
+        kw = {k: (v(step) if callable(v) else v) for k, v in ctx_kw.items()}
+        event = gen.step(Context(step, chord, key, **kw))
+        if event:
+            out.append((step, event))
+    return out
+
+
+def test_lead_plays_harder_and_busier_when_the_player_does():
+    soft = [_lead_notes(seed=s, energy=0.0) for s in range(6)]
+    hard = [_lead_notes(seed=s, energy=1.0) for s in range(6)]
+    assert sum(map(len, hard)) > 1.3 * sum(map(len, soft))
+    mean = lambda runs: np.mean([e.velocity for run in runs for _, e in run])
+    assert mean(hard) > mean(soft) + 15
+
+
+def test_answer_mode_stays_off_the_strums_and_fills_the_gaps():
+    """The player strums on beats one and two of every bar and rests on three and four."""
+    since = lambda step: float(step % 16 % 4) if step % 16 < 8 else float(step % 16 - 4)
+    def halves(runs):
+        first = sum(1 for run in runs for step, _ in run if 0 < step % 16 < 8 and step % 4 == 0)
+        second = sum(1 for run in runs for step, _ in run if step % 16 >= 8)
+        return first, second
+    plain = halves([_lead_notes(seed=s, since_onset=since) for s in range(6)])
+    answer = halves([_lead_notes(seed=s, since_onset=since, answer=True) for s in range(6)])
+    assert answer[0] < 0.6 * plain[0]  # fewer notes on top of the strum on beat two
+    assert answer[1] > 1.2 * plain[1]  # more in the half bar the player leaves empty
+
+
+def test_detector_reports_energy_and_strum_onsets():
+    now = [0.0]
+    det = ChordDetector(SR, clock=lambda: now[0])
+    quiet = 0.25 * np.concatenate([strum("Em", 1.0, SR, strums=2) for _ in range(6)])
+    loud = np.concatenate([strum("Em", 1.0, SR, strums=2) for _ in range(2)])
+    onsets = []
+    for audio in (quiet, loud):
+        for i in range(0, len(audio), 512):
+            det.feed(audio[i : i + 512])
+            now[0] += 512 / SR
+            if det.since_onset() < 0.03:
+                onsets.append(round(now[0] * 2) / 2)
+        if audio is quiet:
+            assert 0.35 < det.energy < 0.65  # playing at their usual level
+    assert det.energy > 0.8  # four times louder than they have been
+    assert len(set(onsets)) >= 12  # a strum every half second for eight seconds
+
+
+def test_lead_approaches_a_known_next_chord():
+    """The last note of a bar should sit a scale step from a tone of the chord that is coming."""
+    f = Chord.parse("F")
+    def last_notes(**kw):
+        runs = [_lead_notes(seed=s, **kw) for s in range(12)]
+        return [max((n for n in run if n[0] // 16 == bar), default=None) for run in runs for bar in range(32)]
+    def approaching(notes):
+        good = [n for n in notes if n and n[1].pitch % 12 not in f.pitch_classes
+                and ({(n[1].pitch + d) % 12 for d in (-2, -1, 1, 2)} & f.pitch_classes)]
+        return len(good) / len([n for n in notes if n])
+    assert approaching(last_notes(next_chord=f)) > approaching(last_notes()) + 0.1
+
+
+def test_calibration_finds_the_delay():
+    from elfjamalong.calibrate import onset_delays, summary
+
+    sent = [1.0 + 0.6 * i for i in range(8)]
+    blocks = []
+    t = 0.0
+    while t < 7:
+        level = 0.001
+        for s in sent[:7]:  # the last note is never heard
+            if s + 0.035 <= t < s + 0.12:
+                level = 0.2
+        blocks.append((t, level))
+        t += 0.005
+    delays = onset_delays(blocks, sent)
+    assert len(delays) == 7 and all(0.03 <= d <= 0.045 for d in delays)
+    assert "--offset-ms" in summary(delays, 8)[1]
+    assert "heard only" in summary(onset_delays([(i * 0.01, 0.001) for i in range(500)], sent), 8)[0]
+
+
+def test_presets_choose_roles(tmp_path):
+    import mido
+
+    from elfjamalong.cli import main
+
+    out = tmp_path / "trio.mid"
+    assert main(["render", "--preset", "trio", "--bars", "4", "-o", str(out)]) == 0
+    assert [t.name for t in mido.MidiFile(out).tracks[1:]] == \
+        ["ElfJamAlong lead", "ElfJamAlong bass", "ElfJamAlong arp", "Chords"]
+
+
+@pytest.mark.parametrize("seed", range(4))
+def test_learned_lead_keeps_the_rules_of_the_road(seed):
+    """The trained lead must obey the same contract: in key, in range, monophonic, not silent."""
+    from elfjamalong.engine import Voice
+    from elfjamalong.learned import LearnedMelody
+
+    chords = [Chord.parse(c) for c in "Am F C G".split()]
+    key = Key.parse("C major")
+    sink = Sink()
+    bar = [0]
+    eng = Engine([Voice("lead", LearnedMelody(seed=seed), sink)], lambda: (chords[bar[0] % 4], key))
+    beat = 0.0
+    while beat < 32 * 4:
+        bar[0] = int(beat // 4)
+        sink.t = beat
+        eng.tick(beat)
+        beat += 0.01
+    eng.stop()
+    assert sink.max_poly == 1 and not sink.sounding
+    assert 80 < len(sink.on) < 32 * 16 * 0.8
+    assert all(60 <= p <= 84 for _, p, _ in sink.on)
+    assert all(p % 12 in key.pitch_classes for _, p, _ in sink.on)
+    assert len({p for _, p, _ in sink.on}) >= 6
+    leaps = [abs(b[1] - a[1]) for a, b in zip(sink.on, sink.on[1:])]
+    assert np.mean(leaps) < 4.5 and max(leaps) <= 12
+
+
+def test_learned_lead_follows_borrowed_chords_density_and_unknown_key():
+    from elfjamalong.learned import LearnedMelody
+    from elfjamalong.melody import Context
+
+    def run(chord, key, **kw):
+        gen = LearnedMelody(seed=1, **kw)
+        return [e.pitch for s in range(32 * 16) if (e := gen.step(Context(s, Chord.parse(chord), key)))]
+
+    assert all(p % 12 != 7 for p in run("E", Key.parse("A minor")))  # G# in, G out
+    assert {p % 12 for p in run("Em", None)} <= {4, 7, 9, 11, 2}  # the chord's pentatonic
+    assert len(run("C", None, density=0.9)) > 1.5 * len(run("C", None, density=0.2))
+
+
+def test_link_audio_source_receives_a_channel():
+    """Needs tools/linktap/build.sh to have been run; sends itself a tone over Link Audio."""
+    import subprocess
+    import time
+    from pathlib import Path
+
+    helper = Path(__file__).resolve().parents[1] / "tools" / "linktap" / "linktap"
+    if not helper.exists():
+        pytest.skip("linktap helper not built")
+    from elfjamalong.cli import _LinkAudio
+
+    sender = subprocess.Popen([str(helper), "--send-tone"], stderr=subprocess.DEVNULL)
+    try:
+        time.sleep(1.5)
+        try:
+            source = _LinkAudio("tone")
+        except SystemExit as err:
+            pytest.skip(f"Link peers cannot see each other on this machine: {err}")
+        heard = []
+        source.start(heard.append)
+        time.sleep(1.5)
+        source.close()
+    finally:
+        sender.terminate()
+    audio = np.concatenate(heard)
+    assert source.sample_rate == 48000 and "tone" in source.label
+    assert len(audio) > 48000  # at least a second arrived
+    spectrum = np.abs(np.fft.rfft(audio[:48000] * np.hanning(48000)))
+    assert abs(int(spectrum.argmax()) - 440) <= 1
+
+
+def test_dominant_seventh_brings_its_flat_seventh():
+    key = Key.parse("A major")
+    assert 8 in scale_for(Chord.parse("A"), key) and 7 not in scale_for(Chord.parse("A"), key)
+    allowed = scale_for(Chord.parse("A7"), key)
+    assert 7 in allowed and 8 not in allowed  # G natural replaces G sharp
+    sink = play([Chord.parse("A7")], key, 16, seed=1)
+    assert all(p % 12 != 8 for _, p, _ in sink.on)
+    assert Chord.parse("A7").pitch_classes == Chord.parse("A").pitch_classes  # bass and arpeggio are unchanged
+
+
+def test_chords_from_midi_notes():
+    from types import SimpleNamespace as Msg
+
+    from elfjamalong.midi_in import MidiChords, chord_from_notes
+
+    spell = lambda *notes: str(chord_from_notes(notes))
+    assert spell(48, 52, 55) == "C" and spell(52, 55, 60) == "C"  # root position and an inversion
+    assert spell(45, 48, 52) == "Am" and spell(43, 47, 50, 53) == "G7"
+    assert spell(48, 52, 55, 57) == "C" and spell(45, 52, 55, 60) == "Am"  # C6 or Am7: the bass decides
+    assert chord_from_notes([48]) is None and chord_from_notes([48, 55]) is None  # no third, no guess
+
+    now = [0.0]
+    keys = MidiChords(clock=lambda: now[0])
+    for name, notes in [("Am", (45, 48, 52)), ("F", (41, 45, 48)), ("C", (48, 52, 55)), ("G", (43, 47, 50))] * 2:
+        for n in notes:
+            keys.feed(Msg(type="note_on", note=n, velocity=70))
+        assert str(keys.chord) == name and keys.active(4.0)
+        now[0] += 2.0
+        for n in notes:
+            keys.feed(Msg(type="note_off", note=n, velocity=0))
+    assert keys.key.pitch_classes == Key.parse("C major").pitch_classes
+    assert keys.active(4.0)
+    now[0] += 5.0
+    assert not keys.active(4.0)  # hands off the keys for longer than the tail
+    for n in (45, 48, 52):
+        keys.feed(Msg(type="note_on", note=n, velocity=120))
+    assert keys.energy > 0.7 and keys.since_onset() == 0.0

@@ -24,6 +24,8 @@ class Context:
     chord: Chord
     key: Key | None
     next_chord: Chord | None = None  # the next bar's chord, when the progression is a known loop
+    energy: float = 0.5  # how hard the player is playing against their own average, 0-1
+    since_onset: float | None = None  # sixteenths since the player last struck a chord (None: unknown)
 
 
 @dataclass(frozen=True)
@@ -51,9 +53,11 @@ class RuleBasedMelody:
     its contour, then a sparse ending that leaves room to breathe.
     """
 
-    def __init__(self, low: int = 60, high: int = 84, density: float = 0.5, seed: int | None = None):
+    def __init__(self, low: int = 60, high: int = 84, density: float = 0.5, seed: int | None = None,
+                 answer: bool = False):
         self.low, self.high = low, high
         self.density = max(0.05, min(1.0, density))
+        self.answer = answer  # call and response: leave the player's strums alone, fill the gaps
         self.rng = random.Random(seed)
         self.reset()
 
@@ -66,11 +70,12 @@ class RuleBasedMelody:
         self._contour: dict[int, int] = {}
         self._bar_seen = -1
         self._phrase_start: int | None = None
+        self._energy = 0.5
 
     # ---------------------------------------------------------------- rhythm
 
     def _new_rhythm(self) -> list[int]:
-        scale = self.density / 0.5
+        scale = self.density / 0.5 * (0.6 + 0.8 * self._energy)  # busier when the player digs in
         onsets = [s for s, p in enumerate(_ONSET_BASE) if self.rng.random() < min(0.97, p * scale)]
         while len(onsets) < 2:
             onsets = sorted(set(onsets) | {self.rng.choice([0, 4, 8, 12])})
@@ -97,7 +102,7 @@ class RuleBasedMelody:
     # ----------------------------------------------------------------- pitch
 
     def _choose(self, pool: list[int], chord: Chord, strong: bool, downbeat: bool, final: bool,
-                target: int | None) -> int:
+                target: int | None, toward: Chord | None = None) -> int:
         chord_pcs = chord.pitch_classes
         if self._last is None:
             centre = (self.low + self.high) / 2
@@ -134,6 +139,11 @@ class RuleBasedMelody:
             if abs(self._last_move) >= 3 and d * self._last_move < 0 and abs(d) <= 2:
                 w *= 2.0  # step back after a leap
             w *= math.exp(-(((p - centre) / span) ** 2))
+            if toward is not None:
+                # Last note before a known chord change: prefer one a scale step from a tone of the next chord.
+                near = [q for q in (pool[i - 1] if i else None, pool[i + 1] if i + 1 < len(pool) else None) if q is not None]
+                if any(q % 12 in toward.pitch_classes for q in near) and p % 12 not in toward.pitch_classes:
+                    w *= 3.0
             weights.append(w)
         if not any(weights):
             return pool[last_idx]
@@ -152,7 +162,13 @@ class RuleBasedMelody:
         bar_in_phrase = bar % PHRASE_BARS
         if bar != self._bar_seen:
             self._bar_seen = bar
+            self._energy = ctx.energy
             self._onsets = self._plan_bar(bar_in_phrase)
+        if self.answer and ctx.since_onset is not None:
+            if pos in self._onsets and pos != 0 and ctx.since_onset < 1.0 and self.rng.random() < 0.7:
+                return None  # the player just struck: stay out of the way
+            if pos not in self._onsets and pos % 2 == 0 and ctx.since_onset >= 3.0 and self.rng.random() < 0.35:
+                self._onsets = sorted(set(self._onsets) | {pos})  # the player left a gap: fill it
         if pos not in self._onsets:
             return None
 
@@ -169,7 +185,8 @@ class RuleBasedMelody:
         target = None
         if bar_in_phrase == 2 and pos in self._contour and self.rng.random() < 0.75:
             target = self._contour[pos]
-        pitch = self._choose(pool, ctx.chord, strong, pos == 0, final, target)
+        toward = ctx.next_chord if not later and ctx.next_chord != ctx.chord else None
+        pitch = self._choose(pool, ctx.chord, strong, pos == 0, final, target, toward)
 
         if self._last is not None:
             move = pool.index(pitch) - min(range(len(pool)), key=lambda i: abs(pool[i] - self._last))
@@ -185,5 +202,5 @@ class RuleBasedMelody:
             self._direction = -self._direction
 
         base = 100 if pos == 0 else 88 if pos % 4 == 0 else 76
-        velocity = max(1, min(127, base + self.rng.randint(-6, 6)))
+        velocity = max(1, min(127, base + round((ctx.energy - 0.5) * 30) + self.rng.randint(-6, 6)))
         return NoteEvent(pitch, velocity, length * 0.9)

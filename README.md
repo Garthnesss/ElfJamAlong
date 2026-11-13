@@ -70,7 +70,10 @@ Useful options:
 | `--offset-ms 20` | play early to cancel instrument latency |
 | `--tail 2` | stop sooner after the guitar goes quiet |
 | `--follow-transport` | only play while Live is playing (enable Start Stop Sync in Live's Link settings) |
-| `--predict` | once your progression has repeated, play over the chord that comes next instead of waiting to hear it (new, not yet tried in Live) |
+| `--predict` | once your progression has repeated, play over the chord that comes next instead of waiting to hear it (not yet tried in Live) |
+| `--feel answer` | call and response: the lead keeps off your strums and fills the gaps you leave. The default, `follow`, plays harder and busier when you do; `off` ignores how you play |
+| `--lead model` | the lead is played by a small network trained on guitar solos instead of the rules (not yet judged by ear) |
+| `--preset trio` | `solo` = lead, `duo` = lead and bass, `trio` = lead, bass and arpeggio |
 | `--gate-db -40` | ignore more background noise |
 | `--no-link --bpm 96` | run on an internal clock without a DAW |
 
@@ -90,6 +93,29 @@ from another terminal, to keep the last 8 complete bars (`--capture-bars`). They
 are written to `captures/` as a MIDI file with one track per role. If the
 AbletonMCP remote script is running in Live, the same notes also go into the
 first empty clip slot of the track named `ElfJamAlong` (`--live-track`).
+
+**Latency.** `uv run elfjamalong calibrate` (with the same `--source` options as
+`run`) sends eight short notes, listens for them coming back and suggests a value
+for `--offset-ms`. Use a sound with a sharp attack and keep everything else quiet.
+
+## Other ways in
+
+**Link Audio (Live 12.4 and later).** `tools/linktap/build.sh` builds a small
+receiver once (it downloads the Ableton Link SDK; needs git and a C++ compiler).
+Turn on Link Audio in Live's settings, then:
+
+```bash
+uv run elfjamalong devices                                  # lists the Link Audio channels on offer
+uv run elfjamalong run --source link --link-channel guitar  # any part of the channel's name
+```
+
+If Live can send the guitar track on its own channel, this gives ElfJamAlong the
+guitar alone, with none of its own notes in it. The receiver has been tested
+against its own test sender (`linktap --send-tone`), not yet against Live. It
+also runs on Linux.
+
+**MIDI keyboard.** `uv run elfjamalong run --source midi --midi-in <part of the port name>`
+reads the chords from the notes you hold; no audio is involved.
 
 ## No interface: listen to the DAW directly
 
@@ -126,14 +152,17 @@ not the bar position.
 
 ## What it detects
 
-Major and minor triads only. Sevenths and suspended chords land on the nearest
-triad; a bare power chord has no third, so major/minor is a guess there. The key
+Major and minor chords, and whether a major chord is a dominant seventh (shown as
+`G7`; the melody then uses its flat seventh). Other sevenths and suspended chords
+land on the nearest triad; a bare power chord has no third, so major/minor is a
+guess there. The key
 is estimated from the chords heard so far and appears after two different
 chords; until then the melody stays on the current chord's pentatonic.
 
-The chord is chosen by a small trained network (`src/elfjamalong/chord_model.npz`,
-about 11 KB, plain numpy at run time). It reads pitch-class energy in three
-registers and shares its weights across all 12 roots. `classifier="templates"`
+The chord is chosen by five small trained networks whose answers are averaged
+(`src/elfjamalong/chord_model.npz`, plain numpy at run time). Each reads
+pitch-class energy in three registers and shares its weights across all 12 roots.
+Chords that belong to the key heard so far are slightly favoured. `classifier="templates"`
 on `ChordDetector` switches back to the untrained template matcher.
 
 Accuracy on real guitar, measured live-style (causal, every 0.1 s) on GuitarSet
@@ -141,13 +170,16 @@ players the model did not train on:
 
 | | trained model | templates |
 |---|---|---|
-| all styles | 68% | 38% |
-| rock, singer-songwriter | 81-84% | |
-| jazz, bossa nova | 59-68% | |
-| funk | 45% | |
+| all styles | 70% | 38% |
+| rock, singer-songwriter | 83-86% | |
+| jazz, bossa nova | 63-68% | |
+| funk | 48% | |
 
-Half a second after a chord change the all-styles figure is 77% (rock 92%,
-singer-songwriter 94%). The right chord appears a median 0.36 s after a change.
+Half a second after a chord change the all-styles figure is 79% (rock 91%,
+singer-songwriter 95%). The right chord appears a median 0.34 s after a change.
+On the pickup recordings of the same takes the all-styles figure is 71%. A
+dominant seventh is shown as one a quarter of the time, and a plain major chord
+is wrongly shown as a seventh 2% of the time.
 GuitarSet has only 15 chord progressions, which every player plays, so these
 figures are for progressions the model has met; on a progression it has not met
 they are a few points lower (see STATUS.md). The shipped model is trained on all
@@ -158,12 +190,15 @@ uv run python tools/train_chords.py data/guitarset          # train on 4 players
 uv run python tools/train_chords.py data/guitarset --hold-progression 3   # stricter: also an unseen progression
 uv run python tools/train_chords.py data/guitarset --final  # train on all, write the model
 uv run python tools/bench_guitarset.py data/guitarset       # live-pipeline accuracy, reaction time, stability
+uv run python tools/train_melody.py data/guitarset [--final] # the learned lead, from the solo excerpts
 ```
 
 These need `annotation.zip` and `audio_mono-mic.zip` from GuitarSet in
-`data/guitarset/` (not in git).
+`data/guitarset/` (not in git). If `audio_mono-pickup_mix.zip` is there too, the
+chord model also trains on the pickup recordings, which sound like a guitar
+plugged into an interface. Both models are derived from GuitarSet.
 
-The model is derived from GuitarSet (Q. Xi, R. Bittner, J. Pauwels, X. Ye,
+The models are derived from GuitarSet (Q. Xi, R. Bittner, J. Pauwels, X. Ye,
 J. P. Bello, "GuitarSet: A Dataset for Guitar Transcription", ISMIR 2018),
 licensed CC BY 4.0: https://zenodo.org/records/3371780
 

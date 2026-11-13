@@ -8,7 +8,7 @@ You are continuing work on **ElfJamAlong**, in `/Users/gerth/Projects/ElfJamAlon
 
 ## Read first, and only these
 1. `STATUS.md` — what is verified, what is BUILT NOT TESTED, known problems.
-2. `ROADMAP.md` — milestones; you are working on **M2 — Real guitar**.
+2. `ROADMAP.md` — milestones; most of what can be built without Live is built, and the work now is hearing it.
 3. `PROJECT_TRUTH.md` — the non-negotiables. Follow them.
 4. `ARCHITECTURE.md` — read the section for the module you are about to change, not the whole file.
 
@@ -19,10 +19,10 @@ You are continuing work on **ElfJamAlong**, in `/Users/gerth/Projects/ElfJamAlon
 - **Measure, do not guess.** Any detector change is judged with the benchmark on held-out players:
   `uv run python -I tools/train_chords.py data/guitarset` (trains on players 00–03, writes `data/guitarset/model_holdout.npz`), then
   `uv run python -I tools/bench_guitarset.py data/guitarset --players 4,5 --model data/guitarset/model_holdout.npz`
-  Baseline to beat: **68.5% root+quality, 77.4% settled** overall; rock 81%, singer-songwriter 84%, bossa nova 68%, jazz 59%, funk 45%; median reaction 0.36 s; 2.00 reported changes per real change.
-  GuitarSet's 15 progressions are shared by every player. For any change that gives the model more context, also run the stricter split: add `--hold-progression 3` to the training command (writes `model_holdout_p3.npz`) and `--progressions 3 --model data/guitarset/model_holdout_p3.npz` to the benchmark. Baseline there: 66.8% / 78.1% (progression 3), 54.5% / 61.3% (progression 2).
+  Baseline to beat: **70.2% root+quality, 78.7% settled** overall; rock 83%, singer-songwriter 86%, bossa nova 68%, jazz 63%, funk 48%; median reaction 0.34 s; 1.95 reported changes per real change. Training takes about seven minutes (five networks) and uses `audio_mono-pickup_mix.zip` too if it is in the folder.
+  GuitarSet's 15 progressions are shared by every player. For any change that gives the model more context, also run the stricter split: add `--hold-progression 3` to the training command (writes `model_holdout_p3.npz`) and `--progressions 3 --model data/guitarset/model_holdout_p3.npz` to the benchmark. Baseline there: 69.2% / 80.1% (progression 3).
 - Only after a change wins on held-out players, retrain the shipped model with `--final`.
-- **Tests must pass:** `uv run pytest -q` (48 tests today). Add a test for each behaviour you add.
+- **Tests must pass:** `uv run pytest -q` (62 tests today; build `tools/linktap/build.sh` first or one is skipped). Add a test for each behaviour you add.
 - **Honest status.** After each task, update `STATUS.md`: move items between Verified, BUILT NOT TESTED and Known problems, and add a History line. Never call something verified that you have not run.
 - **Ask before** downloading anything, pushing to GitHub, or adding a dependency. Selling versus personal use is undecided, so any new dependency or dataset must allow commercial use or be flagged.
 - Commit after each finished task with a clear message. Do not push unless I say so.
@@ -30,23 +30,19 @@ You are continuing work on **ElfJamAlong**, in `/Users/gerth/Projects/ElfJamAlon
 
 ## Tasks, in order
 
-### A. Minor chords (no help from me needed)
-Chords labelled minor are right 48% of the time against 73% for major: heard as the major on the same root, or as the relative major. `STATUS.md` ("What was tried on the classifier") lists what did not help: pitch resolution, more registers, class weights, a larger network, augmentation, synthesized chords. Do not repeat those. Untried: GuitarSet's `audio_mono-pickup_mix.zip` (the same takes through the pickup, 683 MB, ask before downloading) as extra training audio; averaging five models (+1 point, measured, not shipped); a key-aware prior in the belief filter (diatonic chords slightly favoured once the key is known).
-**Done when** held-out root+quality improves by at least 3 points on unseen players and does not drop on the unseen-progression split.
+Everything below needs me at the computer with Live open. `STATUS.md`, "BUILT NOT TESTED", is the full list; take the items in this order and record what happened after each.
 
-### B. Hear `--predict` (needs me)
-Loop prediction is built and tested on synthesized audio only. Walk me through trying it in Live on a four-chord loop, then on a loop I break out of. Record what happened in `STATUS.md`; if it holds up, make it the default in `elfjamalong.toml`.
+### A. The basics, never yet heard
+Link on, the ElfJamAlong track armed (or Monitor set to In) so its own notes are audible, arpeggio, `ElfJamAlong.command` by double-click, capture with Enter.
 
-### C. Seventh, sus and power chords (no help needed)
-Today everything is reduced to major/minor. Extend the label set (maj, min, 7, maj7, min7, sus4, 5) where GuitarSet has enough examples (check counts first: it is mostly maj, min, 7 and hdim7), keep reporting root + major/minor accuracy for comparison, and make `scale_for` in `theory.py` use the richer chord (a dominant 7 adds its ♭7 to the allowed notes).
-**Done when** the old metric is no worse and the new classes are reported separately.
+### B. Link Audio (`--source link`)
+Run `tools/linktap/build.sh` (first time on macOS: fix the script if it fails). Ask me to turn on Link Audio in Live's settings and look for a way to send one track. Then `uv run elfjamalong devices` should list Live's channels, and `run --source link --link-channel <name>` should follow the guitar. If Live can only send the master, say so in `STATUS.md` and `ROADMAP.md`.
 
-### D. Link Audio input (needs me for one check)
-Live here is 12.4.16, which has Link Audio. First ask me to look in Live (Settings → Link, and a track's output chooser) and tell you whether a single track can be sent over Link Audio. If yes: write a small C++ helper next to `tools/livetap/` that joins the Link session, receives that channel and writes mono float32 PCM to stdout (same contract as `livetap`), and add `--source link` in `cli.py`. The SDK is `LinkAudio.hpp` in https://github.com/Ableton/link (GPLv2+; note that in `PROJECT_TRUTH.md`).
-**Done when** `elfjamalong run --source link` follows a guitar track in Live with the ElfJamAlong track audible, and no own-note handling is needed.
+### C. Loop prediction, feel and the learned lead
+`--predict` on a four-chord loop, then on a loop I break out of. `--feel answer` against the default. `--lead model` against the rules on the same progression: ask me which I prefer and why, and write that down; it is the only test of the model that counts. Then `elfjamalong calibrate`.
 
-### E. Close out BUILT NOT TESTED (needs me)
-Walk me through each item in that section of `STATUS.md`, one at a time: Link on, track armed (or Monitor set to In), own notes audible, arpeggio, `ElfJamAlong.command`, capture with Enter. After each, record what happened.
+### D. If I am not there: minor chords
+Right 48% of the time against 73% for major. `STATUS.md` ("What was tried on the classifier") lists what did not help; do not repeat it. The classifier needs more varied chord-labelled guitar audio; look for some whose licence allows commercial use and ask me before downloading.
 
 ## Useful facts
 - Run: `uv run elfjamalong run` (settings in `elfjamalong.toml`: listens to Live through the tap, lead + bass). Demo without audio: `uv run elfjamalong demo`.
@@ -55,4 +51,4 @@ Walk me through each item in that section of `STATUS.md`, one at a time: Link on
 - The AbletonMCP bridge answers on localhost:9877 when Live is open; `src/elfjamalong/capture.py` shows how to call it. It cannot arm tracks or change routing.
 - In Live, the receiving track must be named `ElfJamAlong` for captures to land in it.
 
-Start with task E if I am at the computer with Live open, otherwise task A. Tell me in two or three lines what you are about to try before you change code.
+Start with task A if I am at the computer with Live open, otherwise task D. Tell me in two or three lines what you are about to try before you change code.
