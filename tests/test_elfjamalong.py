@@ -811,3 +811,32 @@ def test_chords_from_midi_notes():
     for n in (45, 48, 52):
         keys.feed(Msg(type="note_on", note=n, velocity=120))
     assert keys.energy > 0.7 and keys.since_onset() == 0.0
+
+
+@pytest.mark.xfail(strict=True, reason="measured 2026-11-13: through the tap the trio's own sound hides whether the player stopped "
+                   "(masked-energy share, level and model confidence are the same with and without the guitar). "
+                   "Use --source link. Remove the mark when the detector can tell.")
+def test_recorded_tap_goes_inactive_after_the_guitar_stops():
+    """Recorded from Live through the tap with the trio audible: 26 s of the virtual guitar loop, then the
+    clip stopped and 18 s more. After --tail (4 s) plus the clip's last bar and release, the detector
+    should have stopped reporting a chord. Today it never does."""
+    import json
+    import mido
+
+    sr, x = _load_wav_mono(_FIXTURES / "trio-tap-stop.wav")
+    t_stop = json.loads((_FIXTURES / "trio-tap-stop.json").read_text())["t_stop"]
+    events, _ = _own_note_events(_FIXTURES / "trio-tap-stop.mid")
+    now = [0.0]
+    det = ChordDetector(sr, clock=lambda: now[0])
+    nxt, went_inactive = 0, None
+    for i in range(0, len(x), 256):
+        while nxt < len(events) and events[nxt][0] <= now[0]:
+            _, is_on, pitch, cancel = events[nxt]
+            det.own_note_on(pitch, cancel=cancel) if is_on else det.own_note_off(pitch)
+            nxt += 1
+        det.feed(x[i : i + 256])
+        now[0] += 256 / sr
+        if now[0] > t_stop and not det.active(4.0):
+            went_inactive = now[0] - t_stop
+            break
+    assert went_inactive is not None and went_inactive < 12.0

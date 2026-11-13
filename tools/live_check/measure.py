@@ -64,10 +64,13 @@ def main():
                 buf += c
     th = threading.Thread(target=reader, daemon=True)
     th.start()
-    time.sleep(5)
     import mido
     midi = []
-    name = next((n for n in mido.get_input_names() if "ElfJamAlong" in n), None)
+    name = None
+    for _ in range(60):   # the port appears once the audio source is up (Link Audio can take a while)
+        name = next((n for n in mido.get_input_names() if "ElfJamAlong" in n), None)
+        if name: break
+        time.sleep(0.5)
     if name:
         inp = mido.open_input(name)
         def mreader():

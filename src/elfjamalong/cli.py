@@ -304,6 +304,10 @@ def cmd_run(args) -> int:
     stop = _install_stop()
     capturer = _Capturer(engine, clock, args, lambda: str(detector.key or ""))
     print(f"Listening: {source.label}" + (f" @ {source.sample_rate:.0f} Hz" if source.sample_rate else ""))
+    if args.source == "live":
+        print("Note: through the tap ElfJamAlong hears its own sound too, and cannot tell when you stop.\n"
+              "      To have it fall silent when you do, send your guitar track alone: --source link\n"
+              "      (Live 12.4: Settings > Link > Link Audio On, then --link-channel <part of the track name>).")
     print(f"MIDI out:  virtual port 'ElfJamAlong', channel {args.channel}, roles: {args.roles}")
     print(f"Press Enter to keep the last {args.capture_bars} bars.  Ctrl-C to quit.", flush=True)
 
