@@ -2,14 +2,14 @@
 # Any long option works here, with the leading dashes removed.
 
 [run]
-source = "live"        # listen to Ableton Live's output directly ("device" = an audio input)
+source = "link"        # one Live track over Link Audio (Live 12.4: Settings > Link > Link Audio On); "live" = tap the whole output, "device" = an audio input
+link-channel = "guitar"  # part of the track name; the first match wins, so keep it unique
 roles = "lead,bass"    # any of: lead, bass, arp
 capture-bars = 8
 density = 0.5
 # predict = true       # once a progression has repeated, play over the chord that comes next
 # feel = "answer"      # call and response ("follow" is the default, "off" ignores how you play)
 # lead = "model"       # the lead trained on guitar solos instead of the rules
-# source = "link"      # receive a Link Audio channel; link-channel = "guitar" picks it by name
 
 [demo]
 roles = "lead,bass"
